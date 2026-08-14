@@ -9,7 +9,7 @@ Multi-agent Taskmaster for the Google Cloud "All Things Agentic" hackathon (Trac
 Key verified facts driving this design (research 2026-08-14):
 
 - **ADK Go v2.2.0 is GA** (module `google.golang.org/adk/v2`, requires **Go 1.26.5**): graph workflow engine, human-in-the-loop, A2A integration (`server/adka2a`, `agent/remoteagent/v2`), MCP toolsets, Cloud Run/Agent Engine deploy paths.
-- **AP2 spec v0.2** (Apr 2026) defines **two mandates** — Checkout Mandate and Payment Mandate — not the v0.1 Intent→Cart→Payment triple that most articles (and the official Go samples) still describe. Mandate JWTs must use **non-deterministic signatures (ECDSA), not Ed25519**; versioning via exact-match `vct` claims (`mandate.checkout.open.1`, `mandate.payment.1`); merchant must return a signed Checkout JWT and issue Checkout/Payment Receipts. The **Trusted Surface must be non-agentic**.
+- **AP2 spec v0.2** (Apr 2026) defines **two mandates** — Checkout Mandate and Payment Mandate — not the v0.1 Intent→Cart→Payment triple that most articles (and the official Go samples) still describe. Mandate JWTs must use **non-deterministic signatures (ECDSA), not Ed25519**; versioning via exact-match `vct` claims — closed mandates are `mandate.checkout.1` / `mandate.payment.1` (the `*.open.1` variants exist only for Human-Not-Present delegation, which we don't ship); merchant must return a signed Checkout JWT and issue Checkout/Payment Receipts. The **Trusted Surface must be non-agentic**. Full transcribed schema with verified test vectors: `docs/research/ap2-v02-schema.md`; implementation in the shared `ap2core/` module (used by both services — crypto is never duplicated).
 - **adk-go pins the legacy a2a-go v0.3.x line** — we speak A2A only through adk-go's `adka2a`/`remoteagent` surface and never import a2a-go v2.x directly.
 - **Models:** `gemini-3.5-flash` (stable; hackathon requires Gemini 3.5+). `gemini-3-pro` / `gemini-3.5-pro` do not exist.
 
@@ -95,7 +95,7 @@ Implements the merchant half of AP2 v0.2 **and explicitly doubles as the simulat
 
 1. User approves proposal in chat → **Shopping Agent** (via A2A) calls `create_checkout` (including the user's public JWK) → merchant returns the **signed Checkout JWT**.
 2. **Trusted Surface** (React modal + `internal/trusted` endpoint; no LLM in path) verifies the Checkout JWT's merchant signature and renders **its contents**: cart, total, merchant identity, checkout hash.
-3. On explicit click, Trusted Surface signs the **Checkout Mandate** (ECDSA P-256, hash-bound to the Checkout JWT, `vct: mandate.checkout.open.1`).
+3. On explicit click, Trusted Surface signs the **closed Checkout Mandate** (ECDSA P-256, hash-bound to the Checkout JWT, `vct: mandate.checkout.1` — Human Present direct model; no open mandates).
 4. Merchant verifies the Checkout Mandate (signature against pinned JWK, exact `vct`, hash binding) → returns **Checkout Receipt**.
 5. Trusted Surface signs the **Payment Mandate** (`vct: mandate.payment.1`, bound to the checkout hash).
 6. Merchant — acting as simulated Credential Provider + Payment Processor — **verifies the Payment Mandate** (signature, `vct`, hash binding), then simulates settlement → **Payment Receipt** (signed) → stored in `mandates`, referenced from `savings_ledger`; CalendarTool books delivery.
