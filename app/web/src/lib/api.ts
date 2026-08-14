@@ -1,0 +1,99 @@
+// Typed client for the Go backend: dashboard API (/app/api) + chat (adkrest /api).
+
+export interface Task {
+  id: string
+  name: string
+  est_minutes: number
+  freq_per_month: number
+  source: string
+  confirmed: boolean
+}
+
+export interface PnlTask extends Task {
+  hours_month: number
+  cost_cents_month: number
+}
+
+export interface Pnl {
+  tasks: PnlTask[] | null
+  total_hours_month: number
+  total_cents_month: number
+  hourly_rate_cents: number
+}
+
+export interface Proposal {
+  id: string
+  user_id: string
+  task_id: string
+  recipe_id: string
+  monthly_savings_cents: number
+  net_monthly_cents: number
+  payback_months: number
+  status: 'proposed' | 'approved' | 'executed' | 'declined'
+}
+
+export interface LedgerEntry {
+  id: string
+  week_start: string
+  recipe_id: string
+  hours_recovered: number
+  brl_recovered_cents: number
+  confirmed: boolean
+  mandate_ref?: string
+}
+
+export interface ConsentResult {
+  mandate_record_id: string
+  checkout: {
+    id: string
+    merchant: { id: string; name: string; website?: string }
+    items: { id: string; title: string; price: { amount: number; currency: string }; quantity: number }[]
+    total: { amount: number; currency: string }
+  }
+  checkout_receipt_jwt: string
+  payment_receipt_jwt: string
+  completed: boolean
+  failure_reason?: string
+}
+
+async function j<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error ?? `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<T>
+}
+
+export const api = {
+  pnl: () => fetch('/app/api/pnl').then((r) => j<Pnl>(r)),
+  proposals: () => fetch('/app/api/proposals').then((r) => j<Proposal[]>(r)),
+  approve: (id: string) =>
+    fetch(`/app/api/proposals/${id}/approve`, { method: 'POST' }).then((r) => j<Proposal>(r)),
+  consent: (proposalId: string) =>
+    fetch('/app/api/trusted/consent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proposal_id: proposalId }),
+    }).then((r) => j<ConsentResult>(r)),
+  ledger: () => fetch('/app/api/ledger').then((r) => j<LedgerEntry[]>(r)),
+}
+
+// Money: integer centavos → "R$1,500.00". Never do float math on money.
+export function brl(cents: number): string {
+  const v = cents / 100
+  return v.toLocaleString('en-US', { style: 'currency', currency: 'BRL', currencyDisplay: 'symbol' })
+}
+
+export function hours(h: number): string {
+  return `${h.toLocaleString('en-US', { maximumFractionDigits: 1 })} h`
+}
+
+export function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
+  try {
+    const p = jwt.split('.')[1]
+    const pad = p + '='.repeat((4 - (p.length % 4)) % 4)
+    return JSON.parse(atob(pad.replace(/-/g, '+').replace(/_/g, '/')))
+  } catch {
+    return null
+  }
+}
