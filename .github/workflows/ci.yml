@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        module: [app, merchant]
+        module: [app, merchant, ap2core]
     defaults:
       run:
         working-directory: ${{ matrix.module }}
