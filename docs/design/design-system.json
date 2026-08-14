@@ -1,0 +1,457 @@
+{
+  "$schema": "https://example.com/design-system.schema.json",
+  "meta": {
+    "name": "Crextio Warm Minimal HR",
+    "version": "1.0.0",
+    "generatedAt": "2026-01-12T01:26:49.980401Z",
+    "source": {
+      "reference": "Screenshot: People table UI (warm minimal, pill navigation, soft gradients).",
+      "notes": "High-level creative-direction tokens and component specs to help an AI replicate the look."
+    }
+  },
+  "brand": {
+    "personality": ["premium", "calm", "warm", "minimal", "friendly", "confident"],
+    "keywords": [
+      "soft neutrals",
+      "sunlit accent",
+      "pill shapes",
+      "airy spacing",
+      "low-contrast borders",
+      "subtle depth"
+    ],
+    "designPrinciples": [
+      {
+        "name": "Warm minimalism",
+        "description": "Use a near-white warm canvas and reduce visual noise; let spacing and typography carry hierarchy."
+      },
+      {
+        "name": "Pill-first geometry",
+        "description": "Controls are predominantly pill/rounded; corners should feel soft and approachable."
+      },
+      {
+        "name": "Low contrast, high clarity",
+        "description": "Borders and dividers are subtle; clarity comes from alignment, weight, and grouping, not heavy lines."
+      },
+      {
+        "name": "Single accent rule",
+        "description": "Yellow 'sun' is the primary accent. Use it sparingly for selection, progress, and primary emphasis."
+      },
+      {
+        "name": "Quiet depth",
+        "description": "Use soft shadows and gentle elevation only where it improves affordance (cards, floating toolbars)."
+      },
+      {
+        "name": "Status via tint + dot",
+        "description": "Statuses are communicated with pale tinted pills and a small dot; never use loud saturated badges."
+      }
+    ]
+  },
+  "foundations": {
+    "layout": {
+      "appShell": {
+        "background": "Warm neutral with subtle radial sun glow on the right; avoid harsh gradients.",
+        "maxContentWidth": 1280,
+        "gutter": 24,
+        "sectionSpacing": { "xs": 12, "sm": 16, "md": 24, "lg": 32, "xl": 48 }
+      },
+      "grid": { "columns": 12, "columnGap": 24, "rowGap": 24 },
+      "density": { "default": "comfortable", "tableRows": "comfortable", "touchTargetMinPx": 40 }
+    },
+    "spacingScale": { "unit": 4, "steps": [0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 64] },
+    "radii": { "none": 0, "sm": 10, "md": 14, "lg": 18, "xl": 24, "pill": 999, "avatar": 999 },
+    "elevation": {
+      "shadowColor": "rgba(20, 18, 14, 0.10)",
+      "levels": {
+        "0": "none",
+        "1": "0 1px 0 rgba(20,18,14,0.05), 0 8px 24px rgba(20,18,14,0.06)",
+        "2": "0 2px 0 rgba(20,18,14,0.06), 0 16px 40px rgba(20,18,14,0.08)",
+        "inset": "inset 0 1px 0 rgba(255,255,255,0.7)"
+      }
+    },
+    "blur": {
+      "frostedSurface": {
+        "backdropFilter": "blur(18px)",
+        "usage": "Optional for floating toolbars/menus on top of the warm gradient."
+      }
+    },
+    "typography": {
+      "fontFamilies": {
+        "ui": {
+          "preferred": [
+            "Inter",
+            "SF Pro Display",
+            "system-ui",
+            "-apple-system",
+            "Segoe UI",
+            "Roboto",
+            "Helvetica",
+            "Arial",
+            "sans-serif"
+          ],
+          "fallback": ["system-ui", "sans-serif"]
+        }
+      },
+      "scale": {
+        "display": { "size": 44, "lineHeight": 52, "weight": 500, "tracking": -0.02 },
+        "h1": { "size": 40, "lineHeight": 48, "weight": 500, "tracking": -0.02 },
+        "h2": { "size": 28, "lineHeight": 36, "weight": 500, "tracking": -0.015 },
+        "h3": { "size": 20, "lineHeight": 28, "weight": 500, "tracking": -0.01 },
+        "body": { "size": 16, "lineHeight": 24, "weight": 400, "tracking": 0 },
+        "bodyStrong": { "size": 16, "lineHeight": 24, "weight": 500, "tracking": 0 },
+        "caption": { "size": 13, "lineHeight": 18, "weight": 400, "tracking": 0.005 },
+        "micro": { "size": 12, "lineHeight": 16, "weight": 500, "tracking": 0.02 }
+      },
+      "numbers": { "tabular": true, "usage": "Use tabular numbers for salary/date columns." }
+    },
+    "color": {
+      "mode": "light",
+      "palette": {
+        "neutral": {
+          "950": "#242321",
+          "900": "#2E2C29",
+          "800": "#3A3834",
+          "700": "#4A4742",
+          "600": "#615F5B",
+          "500": "#7A7772",
+          "400": "#A2A09D",
+          "300": "#C9C5BD",
+          "200": "#DEDAD0",
+          "150": "#E9E5DB",
+          "100": "#F1EEE6",
+          "50": "#F6F5F0",
+          "25": "#FBFAF6"
+        },
+        "sun": {
+          "600": "#E5B73C",
+          "500": "#F0C95D",
+          "400": "#F8D973",
+          "300": "#F5E6AD",
+          "200": "#FBF0CC",
+          "100": "#FFF8E4"
+        },
+        "success": { "600": "#2E7D32", "200": "#DFF1D9", "100": "#EEF8EA" },
+        "danger": { "600": "#B3261E", "100": "#FCE8E6" },
+        "info": { "600": "#1E5CB3", "100": "#E8F0FF" }
+      },
+      "semantic": {
+        "canvas": "#F6F5F0",
+        "canvasGlow": "radial-gradient(900px 600px at 85% 20%, rgba(248,217,115,0.55) 0%, rgba(248,217,115,0.18) 35%, rgba(246,245,240,0) 70%)",
+        "surface": "#FBFAF6",
+        "surfaceSubtle": "#F1EEE6",
+        "surfaceRaised": "#FFFFFF",
+        "textPrimary": "#242321",
+        "textSecondary": "#615F5B",
+        "textTertiary": "#7A7772",
+        "borderSubtle": "rgba(36,35,33,0.08)",
+        "borderHairline": "rgba(36,35,33,0.05)",
+        "icon": "#2E2C29",
+        "accent": "#F8D973",
+        "accentSoft": "#F5E6AD",
+        "accentText": "#242321",
+        "focusRing": "0 0 0 3px rgba(248,217,115,0.55)"
+      },
+      "usageRules": [
+        "Prefer tinted surfaces over pure gray backgrounds to keep the UI warm.",
+        "Primary accent (sun-400) is reserved for: selected table row, key progress fill, primary pill highlight.",
+        "Never place pure white cards on pure white; use slightly warm surfaces and hairline borders instead.",
+        "Status colors are desaturated and used as background tints with a small dot indicator."
+      ]
+    },
+    "iconography": {
+      "style": "Line icons with rounded caps/joins; 1.5px–2px stroke; minimal detail.",
+      "sizes": { "sm": 16, "md": 20, "lg": 24 },
+      "color": "semantic.icon"
+    },
+    "motion": {
+      "easing": {
+        "standard": "cubic-bezier(0.2, 0.0, 0, 1)",
+        "emphasized": "cubic-bezier(0.2, 0.8, 0.2, 1)"
+      },
+      "durationMs": { "fast": 120, "base": 180, "slow": 240 },
+      "patterns": [
+        "Hover: slight background tint + 1px lift (shadow level 1) for clickable pills/cards.",
+        "Focus: warm focus ring (sun tint) with no harsh outline.",
+        "Table row selection: background transition (180ms) to sun-400 tint."
+      ]
+    }
+  },
+  "components": {
+    "AppShell": {
+      "description": "Top navigation + page content on warm canvas with right-side sun glow.",
+      "structure": {
+        "topBarHeight": 64,
+        "contentPadding": 32,
+        "background": { "base": "semantic.canvas", "glow": "semantic.canvasGlow" }
+      }
+    },
+    "TopNavigation": {
+      "type": "pill-tabbar",
+      "container": {
+        "shape": "pill",
+        "background": "rgba(255,255,255,0.55)",
+        "border": "1px solid semantic.borderHairline",
+        "shadow": "elevation.levels.0",
+        "padding": { "x": 10, "y": 8 },
+        "gap": 6
+      },
+      "item": {
+        "shape": "pill",
+        "padding": { "x": 14, "y": 10 },
+        "textStyle": "typography.scale.bodyStrong",
+        "states": {
+          "default": { "bg": "transparent", "text": "semantic.textSecondary" },
+          "hover": { "bg": "rgba(255,255,255,0.8)", "text": "semantic.textPrimary" },
+          "active": { "bg": "semantic.textPrimary", "text": "#FFFFFF" }
+        }
+      },
+      "rightControls": {
+        "iconButtons": "IconButton",
+        "settingsPill": { "label": "Setting", "shape": "pill", "bg": "rgba(255,255,255,0.8)" }
+      }
+    },
+    "PageHeader": {
+      "title": { "textStyle": "typography.scale.h1", "color": "semantic.textPrimary" },
+      "subtitle": { "textStyle": "typography.scale.body", "color": "semantic.textSecondary" },
+      "kpiRow": {
+        "gap": 18,
+        "components": ["KpiProgressPill", "KpiProgressPill", "KpiProgressPill"],
+        "note": "KPIs appear as compact pill progress meters with labels inside."
+      }
+    },
+    "KpiProgressPill": {
+      "container": {
+        "shape": "pill",
+        "height": 44,
+        "minWidth": 210,
+        "background": "rgba(255,255,255,0.55)",
+        "border": "1px solid semantic.borderHairline",
+        "padding": { "x": 10, "y": 6 }
+      },
+      "label": { "textStyle": "typography.scale.caption", "color": "semantic.textSecondary" },
+      "progress": {
+        "track": { "shape": "pill", "bg": "rgba(36,35,33,0.06)", "height": 28 },
+        "fill": { "shape": "pill", "bg": "semantic.accent", "height": 28 },
+        "variantStriped": {
+          "bg": "repeating-linear-gradient(135deg, rgba(36,35,33,0.10) 0 6px, rgba(36,35,33,0.00) 6px 12px)"
+        }
+      },
+      "valueBadge": { "shape": "pill", "bg": "rgba(36,35,33,0.88)", "text": "#FFFFFF" }
+    },
+    "Toolbar": {
+      "description": "Row of filter chips + search + actions. Looks like floating pills on the canvas (not boxed).",
+      "layout": { "gap": 10, "wrap": true, "align": "center" },
+      "left": ["FilterChip*"],
+      "center": ["SearchField"],
+      "right": ["IconButton", "IconButton", "Button"]
+    },
+    "FilterChip": {
+      "shape": "pill",
+      "height": 40,
+      "padding": { "x": 14, "y": 10 },
+      "background": "rgba(255,255,255,0.7)",
+      "border": "1px solid semantic.borderHairline",
+      "textStyle": "typography.scale.body",
+      "icon": { "position": "right", "size": 16, "opacity": 0.7 },
+      "states": {
+        "default": { "bg": "rgba(255,255,255,0.7)", "text": "semantic.textPrimary" },
+        "hover": { "bg": "rgba(255,255,255,0.9)" },
+        "active": { "bg": "semantic.accentSoft", "border": "1px solid rgba(36,35,33,0.08)" }
+      }
+    },
+    "SearchField": {
+      "shape": "pill",
+      "height": 44,
+      "minWidth": 420,
+      "background": "#FFFFFF",
+      "border": "1px solid semantic.borderHairline",
+      "padding": { "x": 16, "y": 10 },
+      "iconLeft": { "name": "search", "size": 18, "color": "rgba(36,35,33,0.55)" },
+      "placeholderColor": "rgba(36,35,33,0.40)",
+      "textStyle": "typography.scale.body",
+      "states": {
+        "focus": {
+          "ring": "foundations.color.semantic.focusRing",
+          "border": "1px solid rgba(248,217,115,0.65)"
+        }
+      }
+    },
+    "Button": {
+      "variants": {
+        "primary": {
+          "shape": "pill",
+          "height": 40,
+          "padding": { "x": 16, "y": 10 },
+          "bg": "#FFFFFF",
+          "border": "1px solid semantic.borderHairline",
+          "text": "semantic.textPrimary",
+          "iconRight": true
+        },
+        "ghost": {
+          "shape": "pill",
+          "height": 40,
+          "bg": "rgba(255,255,255,0.65)",
+          "border": "1px solid transparent"
+        }
+      },
+      "states": {
+        "hover": { "shadow": "elevation.levels.1" },
+        "pressed": { "transform": "translateY(1px)", "shadow": "elevation.levels.0" },
+        "disabled": { "opacity": 0.45 }
+      }
+    },
+    "IconButton": {
+      "shape": "pill",
+      "size": 40,
+      "bg": "rgba(255,255,255,0.7)",
+      "border": "1px solid semantic.borderHairline",
+      "iconSize": 18,
+      "states": {
+        "hover": { "bg": "rgba(255,255,255,0.95)", "shadow": "elevation.levels.1" },
+        "active": { "bg": "semantic.accentSoft" }
+      }
+    },
+    "Card": {
+      "shape": "rounded-2xl",
+      "radius": "radii.xl",
+      "bg": "rgba(251,250,246,0.85)",
+      "border": "1px solid semantic.borderHairline",
+      "shadow": "elevation.levels.0",
+      "padding": 18
+    },
+    "Table": {
+      "container": { "component": "Card", "padding": 0 },
+      "header": {
+        "height": 56,
+        "bg": "transparent",
+        "textStyle": "typography.scale.caption",
+        "textColor": "semantic.textSecondary",
+        "divider": {
+          "style": "dotted",
+          "color": "rgba(248,217,115,0.65)",
+          "pattern": "2px dot / 10px gap"
+        }
+      },
+      "row": {
+        "height": 76,
+        "bg": "transparent",
+        "hoverBg": "rgba(248,217,115,0.12)",
+        "selectedBg": "rgba(248,217,115,0.85)",
+        "borderRadius": "radii.lg",
+        "insetPadding": { "x": 10, "y": 6 },
+        "cellGap": 16,
+        "textStyle": "typography.scale.body"
+      },
+      "cell": {
+        "align": "left",
+        "textPrimary": "semantic.textPrimary",
+        "textSecondary": "semantic.textSecondary",
+        "numeric": { "align": "left", "fontVariant": "tabular-nums" }
+      }
+    },
+    "Checkbox": {
+      "size": 18,
+      "radius": 5,
+      "border": "1px solid rgba(36,35,33,0.18)",
+      "bg": "#FFFFFF",
+      "check": { "color": "#FFFFFF" },
+      "states": {
+        "checked": { "bg": "semantic.textPrimary", "border": "1px solid semantic.textPrimary" },
+        "hover": { "shadow": "elevation.levels.1" },
+        "focus": { "ring": "foundations.color.semantic.focusRing" }
+      }
+    },
+    "Avatar": {
+      "sizes": { "sm": 28, "md": 36, "lg": 44 },
+      "shape": "circle",
+      "ring": { "enabled": true, "width": 2, "color": "rgba(255,255,255,0.9)" },
+      "fallback": { "bg": "semantic.surfaceSubtle", "text": "semantic.textSecondary" }
+    },
+    "StatusBadge": {
+      "shape": "pill",
+      "height": 34,
+      "padding": { "x": 12, "y": 8 },
+      "textStyle": "typography.scale.caption",
+      "dot": { "size": 8, "radius": 999 },
+      "variants": {
+        "invited": { "bg": "success.100", "text": "semantic.textPrimary", "dot": "success.600" },
+        "absent": {
+          "bg": "rgba(36,35,33,0.06)",
+          "text": "semantic.textSecondary",
+          "dot": "rgba(36,35,33,0.45)"
+        }
+      }
+    },
+    "DropdownPill": {
+      "description": "Top-right quick nav pills (Directory / Org Chart / Insights). Same geometry as FilterChip but slightly more prominent.",
+      "shape": "pill",
+      "height": 40,
+      "bg": "rgba(255,255,255,0.75)",
+      "border": "1px solid semantic.borderHairline",
+      "padding": { "x": 16, "y": 10 },
+      "caret": { "size": 16, "opacity": 0.65 }
+    },
+    "Pagination": {
+      "style": "Minimal; prefer infinite scroll for tables. If needed, use pill buttons with subtle borders."
+    },
+    "Toast": {
+      "container": { "component": "Card", "shadow": "elevation.levels.2", "radius": "radii.lg" },
+      "text": { "title": "typography.scale.bodyStrong", "body": "typography.scale.body" },
+      "accent": { "leftBar": "semantic.accent" }
+    },
+    "Modal": {
+      "backdrop": "rgba(36,35,33,0.22)",
+      "panel": { "component": "Card", "radius": "radii.xl", "shadow": "elevation.levels.2", "maxWidth": 560 },
+      "header": { "title": "typography.scale.h3" },
+      "actions": { "layout": "right", "gap": 10 }
+    },
+    "Menu": {
+      "surface": {
+        "bg": "rgba(255,255,255,0.92)",
+        "border": "1px solid semantic.borderHairline",
+        "shadow": "elevation.levels.2",
+        "radius": "radii.lg"
+      },
+      "item": { "height": 40, "paddingX": 12, "hoverBg": "rgba(248,217,115,0.18)" }
+    }
+  },
+  "patterns": {
+    "dataTablePage": {
+      "sections": [
+        { "name": "Header", "contents": ["Page title", "KPI progress pills"] },
+        {
+          "name": "Quick actions",
+          "contents": ["Dropdown pills (Directory/Org Chart/Insights)", "Add/adjust/export actions"]
+        },
+        { "name": "Control bar", "contents": ["Filter chips", "Search field"] },
+        { "name": "Table card", "contents": ["Table header", "Rows", "Status badges", "Row selection"] }
+      ],
+      "hierarchyRules": [
+        "Primary hierarchy is achieved with typography and grouping, not heavy separators.",
+        "Selected row uses sun accent fill; keep text dark for contrast and legibility."
+      ]
+    },
+    "selectionAndEmphasis": {
+      "selectedRow": "Use a warm yellow fill around 85% opacity; keep inner spacing and radius so it feels like a floating pill row.",
+      "primaryAction": "Prefer neutral pills; reserve a full accent-filled button only for critical CTAs (rare in this UI).",
+      "progress": "Show progress as a sun-colored fill inside a pill track; value can appear as a small dark capsule."
+    }
+  },
+  "accessibility": {
+    "contrastTargets": {
+      "bodyTextOnSurface": ">= 4.5:1 (aim); use textPrimary on light surfaces.",
+      "mutedText": ">= 3:1 for secondary labels.",
+      "statusPills": "Ensure dot + text conveys meaning even if color perception varies."
+    },
+    "focus": {
+      "style": "Warm sun focus ring with 3px spread; do not remove outlines without replacement.",
+      "keyboardNav": "All pills, rows, and checkboxes must be reachable and show focus clearly."
+    },
+    "touchTargets": {
+      "minPx": 40,
+      "tableRowClickableArea": "full row including whitespace"
+    },
+    "motion": {
+      "reduceMotion": "Respect OS reduce-motion; replace lifts with background tint only."
+    }
+  }
+}
