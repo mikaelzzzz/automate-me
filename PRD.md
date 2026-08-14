@@ -38,7 +38,7 @@ Reference signals:
 1. **Declare** — user tells the agent their routine by voice (push-to-talk), text, or **photo** (handwritten to-do list, paper calendar, pile of boletos, school note, pantry).
 2. **Estimate** — AI estimates duration & frequency per task from general-knowledge benchmarks (e.g., hand-washing dishes ≈ 40–60 min/day), asks the user to confirm/adjust when uncertain. Every number is user-editable.
 3. **Price** — the deterministic Value Engine computes the **Cost of Inaction**: `time × frequency × personal hourly rate = R$/month lost by NOT automating` — per task and total. Hourly rate is declared or derived (buyback rate: annual income ÷ 2,000 ÷ 4).
-4. **Rank** — automations from the catalog are ranked by **payback**: `(value of time recovered × frequency − automation cost) → months to break even`.
+4. **Rank** — automations from the catalog are ranked by **payback**: `payback_months = upfront_cost ÷ (monthly_time_value_recovered − monthly_running_cost)`. Automations with no upfront cost (subscriptions, services) rank by **net monthly savings** instead; negative-net automations are never proposed. Exact formulas live in the deterministic Value Engine with table-driven tests.
 5. **Execute** — with explicit human approval, the agent acts: AP2 purchase, Calendar writes, Maps-optimized plans, Gmail drafts, Teams report.
 6. **Prove** — the Savings Ledger accumulates: *"You bought back 22 h = R$1,100 this month."* (Yohana's lesson: without measurable proof, retention dies.)
 
@@ -46,32 +46,32 @@ Reference signals:
 
 ### 5.1 Must have (MVP)
 
+Priority order is the listing order: **F1–F6 are the demoable core; F7–F9 degrade gracefully if the schedule slips.**
+
 - **F1 — Conversational onboarding** (voice push-to-talk + text + photo ingestion). Audio goes directly into Gemini as multimodal input (no separate STT); spoken replies via Cloud Text-to-Speech. Photo of a handwritten list/paper calendar → structured tasks (Gemini vision) → routed to the Routine Analyst.
 - **F2 — Value Engine** (deterministic Go, not an LLM): Cost of Inaction + payback ranking. Money math is never hallucinated.
 - **F3 — Dashboard "Life P&L"** (Crextio Warm Minimal design system): KPI pills (h/month leaking, R$/month leaking, R$ recovered), routines table (est. time, R$/month, suggested automation, payback, status badge), and **attention-grabbing charts** (see §8).
-- **F4 — Automation Catalog** — recipes stored as Firestore data over **6 agent capabilities** (Gemini Vision, Calendar write, Maps Routes, Gmail drafts, AP2 purchase, report generation). See §6.
-- **F5 — Daily Briefing (spotlight feature)** — the agent scans the day's calendar events, fans out one route sub-agent per appointment, computes the calmest route and **optimal departure time** (Routes API with future `departure_time`), checks **weather → clothing suggestion**, and raises **flood alerts** for the route (São Paulo focus), writing "Leave at 8:12 → Downtown meeting" blocks into Calendar and pushing everything to a Briefing screen — unprompted.
+- **F4 — Automation Catalog** — recipes stored as Firestore data over the **7 canonical agent capabilities** (`vision`, `calendar_write`, `maps_routes`, `weather_flood`, `gmail_draft`, `ap2_purchase`, `report_gen` — single enum shared with design §4). See §5.2.
+- **F5 — Daily Briefing (spotlight feature)** — the agent scans the day's calendar events, fans out one route sub-agent per appointment, computes the calmest route and **optimal departure time** (Routes API with future `departureTime`), monetizes congestion (**`duration − staticDuration` × hourly rate = "today's traffic cost you R$23"** — a real measured number, straight into the Value Engine), checks **weather → clothing suggestion** (Weather API, GA, full Brazil coverage), and raises **flood alerts** for the route (São Paulo focus) from two layers: Weather API `publicAlerts` (`FLOOD`/`FLASH_FLOOD` events with severity + polygon) and a static GeoSampa historic flood-point layer intersected with the route ("your route crosses 3 points with flooding history"). Writes "Leave at 8:12 → Downtown meeting" blocks into Calendar and pushes everything to a Briefing screen — unprompted.
 - **F6 — AP2 autonomous purchase** — real AP2 **v0.2** flow (Checkout Mandate + Payment Mandate, ECDSA-signed JWTs) against a merchant agent we build as a separate A2A service. Payment settlement is **simulated** and labeled as such. Non-agentic Trusted Surface collects consent (per AP2 threat model).
 - **F7 — Calendar Watcher** — scheduled background scan (Cloud Scheduler) detects new recurring tasks in Google Calendar, refreshes the routine profile, and pushes new proposals. Calendar is a **secondary** source; declared routine is primary.
 - **F8 — Teams mode** — team task list in (text/spreadsheet/photo of a whiteboard) + average team hourly cost → **Automation Opportunities Report**: ranked tasks, suggested automation per task, projected annual savings; shareable report page.
 - **F9 — Savings Ledger** — cumulative proof of hours/R$ bought back, with AP2 receipts (verifiable JWTs) attached.
 
-### 5.2 Executable catalog recipes (MVP — all run on the 6 capabilities)
+### 5.2 Executable catalog recipes (MVP — 8 recipes, every one mapped to a timeline day)
 
-| Recipe | Agent action |
-|---|---|
-| Commute audit | Routes API compares car/transit/bike + departure windows; "your commute costs R$X/month"; writes optimal-departure block |
-| Errand loop | Groups pharmacy+market+post into one Maps-waypoint-optimized weekly loop; schedules it |
-| Dishwasher purchase (demo hero) | Full AP2 v0.2 purchase + delivery event in Calendar |
-| Calendar batching | Consolidates scattered recurring chores into weekly blocks |
-| Delegation drafts | Ready-to-send message/ad for hiring cleaner/help |
-| Gas canister prediction | Predicts run-out from household consumption, compares prices, buys next via AP2 before it dies mid-dinner |
-| Weekly menu from pantry photo | Photo of fridge/pantry → 7-day menu using leftovers first, buys only what's missing, schedules prep |
-| Boleto pile | Photo of boletos → extracts value/due date/47-digit line, schedules payment eve reminders, settles one via AP2 in demo |
-| Anti no-show confirmations | Nightly drafts of client confirmations + reschedule offers with real free slots |
-| School note to calendar | Photo of paper note / WhatsApp print → family calendar events + drafted reply (30-second demo) |
-| Leave-on-time | Per-appointment traffic-predicted departure blocks; proposes video call with the R$ cost of the trip when travel isn't worth it |
-| Teams report | Generates the shareable Automation Opportunities Report |
+All recipes run on the **7 canonical agent capabilities** (single enum, defined in design §4): `vision`, `calendar_write`, `maps_routes`, `weather_flood`, `gmail_draft`, `ap2_purchase`, `report_gen`.
+
+| Recipe | Agent action | Built in days |
+|---|---|---|
+| Commute audit | Routes API compares car/transit/bike + departure windows; "your commute costs R$X/month"; writes optimal-departure block | 9–10 |
+| Dishwasher purchase (demo hero) | Full AP2 v0.2 purchase + delivery event in Calendar | 6–8 |
+| Calendar batching | Consolidates scattered recurring chores into weekly blocks | 3–5 |
+| Delegation drafts | Ready-to-send message/ad for hiring cleaner/help | 3–5 |
+| Boleto pile | Photo of boletos → extracts value/due date/47-digit line, schedules payment-eve reminders in Calendar (settlement is roadmap — bill-pay does not fit a catalog-checkout merchant) | 3–5 |
+| School note to calendar | Photo of paper note / WhatsApp print → family calendar events + drafted reply (30-second demo) | 3–5 |
+| Leave-on-time | Per-appointment traffic-predicted departure blocks; proposes video call with the R$ cost of the trip when travel isn't worth it | 9–10 |
+| Teams report | Generates the shareable Automation Opportunities Report | 11–12 |
 
 ### 5.3 Advised recipes (payback cards; catalog data, no new code)
 
@@ -80,6 +80,8 @@ Robot vacuum / cleaning service · grocery delivery subscription · laundry serv
 ### 5.4 Roadmap (post-hackathon; listed in submission to show vision)
 
 Open Finance monitor (ghost subscriptions, fees — via Pluggy/Belvo) · WhatsApp agent channel · automatic NFS-e issuing for freelancers · health-plan reimbursement end-to-end · self-answering inbox (Gmail read scope).
+
+Cut from MVP scope after adversarial spec review (each needs bespoke orchestration no timeline day covers): gas canister prediction+purchase · weekly menu from pantry photo · anti no-show nightly confirmations · errand-loop waypoint optimization · boleto AP2 settlement.
 
 ## 6. Non-functional requirements
 
@@ -110,10 +112,12 @@ Open Finance monitor (ghost subscriptions, fees — via Pluggy/Belvo) · WhatsAp
 - **Required stack:** Gemini 3.5 ✓ (gemini-3.5-flash) · ADK ✓ (ADK Go v2) · Google Cloud ✓ (Cloud Run, Firestore, Secret Manager, Cloud Scheduler, Maps Platform, Cloud TTS, Cloud Logging).
 - **Deliverables:** public repo + README spin-up instructions · architecture diagram · ~4-min demo video proving Google Cloud backend · hosted URL (encouraged).
 - **Bonus points:** build-in-public blog post (explicitly stating it was built for this hackathon) + social post with **#AllThingsAgenticHackathon**.
-- **Demo script (~4 min):** photo of handwritten list → structured tasks (30s) · push-to-talk "I wash dishes an hour a day" → dashboard updates live (30s) · Life P&L with before/after chart (30s) · Daily Briefing with flood alert + departure block (30s) · dishwasher proposal → consent → **AP2 mandates visualized** → receipt + delivery on Calendar (75s) · Teams report flash (20s) · Savings Ledger + Cloud Run console/logs (25s).
+- **Demo script (~220s of content in a ~4-min uncut take — 20s transition slack):** photo of handwritten list → structured tasks (30s) · push-to-talk "I wash dishes an hour a day" → dashboard updates live (30s) · Life P&L with before/after chart (30s) · Daily Briefing with flood alert + departure block (30s) · dishwasher proposal → consent → **AP2 mandates visualized** → receipt + delivery on Calendar (75s) · Teams report flash (10s) · Savings Ledger + Cloud Run console/logs (15s). Ledger's evolution curve shows seeded history **labeled "simulated weeks"**, plus at least one real entry generated live during the take.
 - **Action item (user):** claim the $150 GCP credits form before Aug 28, 12:00 PT.
 
 ## 9. Success metrics
+
+**Definition — "autonomous action":** agent-initiated and agent-executed; purchases are additionally gated by explicit consent on the Trusted Surface, as the AP2 spec requires. Consent-gated purchase still counts as autonomous.
 
 - Working end-to-end loop on Google Cloud by Aug 26 (buffer before Aug 31 deadline).
 - Demo shows ≥3 autonomous actions (purchase, calendar write, briefing) without mid-demo failure.
@@ -124,11 +128,11 @@ Open Finance monitor (ghost subscriptions, fees — via Pluggy/Belvo) · WhatsAp
 
 | Days | Deliverable |
 |---|---|
-| 1–2 | Scaffold Go+React, CI (all quality gates), Firestore, skeleton **deployed to Cloud Run day one** |
-| 3–5 | Value Engine + Routine Analyst (interview + photo) + dashboard |
+| 1–2 | Scaffold Go+React, CI (all quality gates), Firestore, **Firestore-backed session.Service (go/no-go end of day 2 → fallback: single-instance Cloud Run, tradeoff documented)**, skeleton **deployed to Cloud Run day one** |
+| 3–5 | Value Engine + Routine Analyst (interview + photo) + dashboard + **voice I/O (push-to-talk audio into Gemini, Cloud TTS reply)** + vision recipes (boleto, school note) + batching/delegation |
 | 6–8 | AP2 v0.2 (mandates, merchant A2A service, trusted surface) |
-| 9–10 | Daily Briefing (Maps/Weather/Flood) + Calendar Watcher |
-| 11–12 | Teams report, voice TTS, Savings Ledger, Crextio polish |
+| 9–10 | Daily Briefing (Maps/Weather/GeoSampa) + Calendar Watcher + commute recipes |
+| 11–12 | Teams report, Savings Ledger, Crextio polish |
 | 13–14 | Demo video, architecture diagram, README, blog + social post |
 | 15–17 | Buffer + early submission |
 
@@ -137,9 +141,9 @@ Open Finance monitor (ghost subscriptions, fees — via Pluggy/Belvo) · WhatsAp
 | Risk | Mitigation |
 |---|---|
 | AP2 v0.2 hand-implementation stalls | Spec is deterministic/testable; scope = happy path + 3 failure paths; official Go samples exist as fallback reference (v0.1 nomenclature — do not copy blindly) |
-| Flood API coverage for urban SP unclear (verification in flight) | Fallback designed: Weather API heavy-precipitation proxy + known flood-point heuristics; feature degrades to weather-only |
+| August is dry season in SP — live flood alerts likely empty during demo | Primary narrative uses the GeoSampa **historic risk** layer (always has data, no disclaimer needed); optional replay mode with a real rainy day (2026-01-28 snapshot, 8 flooded points) as complement |
 | adk-go pins legacy a2a-go v0.3.x | Talk A2A only through `adka2a`'s surface; no direct dependency on a2a-go v2.x in the main app |
-| 12 recipes tempt scope creep | Recipes are data; demo commits to hero set (dishwasher, school note or boletos, briefing); rest ship as catalog entries |
+| 8 executable recipes tempt scope creep | Advised recipes are pure data; every executable recipe is mapped to a timeline day (§5.2); demo commits to hero set (dishwasher, school note or boletos, briefing); cut order if slipping: Teams UI → commute audit → batching |
 | Live-demo failure | Seed mode + kill switch; record video against seeded environment |
 
 ## 12. Out of scope (hackathon)
