@@ -49,6 +49,16 @@ func SeedDemo(ctx context.Context, s Store, now time.Time) error {
 		}
 	}
 
+	// a ready-to-approve dishwasher proposal (demo hero + smoke tests)
+	prop := Proposal{
+		ID: "prop-t-dishes-dishwasher", UserID: u.ID, TaskID: "t-dishes", RecipeID: "dishwasher",
+		MonthlySavingsCents: 1375_00, NetMonthlyCents: 1375_00, PaybackMonths: 2.18,
+		Status: ProposalProposed, CreatedAt: now,
+	}
+	if err := s.PutProposal(ctx, prop); err != nil {
+		return err
+	}
+
 	// a drifting plan for the Guardian demo beat
 	plan := ActionPlan{
 		ID:              "plan-batching",
