@@ -37,6 +37,8 @@ Two Cloud Run services + Firestore. All Go.
 │  └─ Shopping Agent       AP2 v0.2 client flow                 │
 │                                │ A2A (via adka2a)             │
 │ Calendar Watcher (Cloud Scheduler → scan → proposals)         │
+│ Plan Guardian (Cloud Scheduler → signals + drift nudges +     │
+│   weekly check-in → projected→confirmed ledger → report)      │
 │ Trusted Surface endpoints (non-agentic: consent + signing)    │
 └────────────────────────────────┼──────────────────────────────┘
                                  ▼
@@ -62,6 +64,7 @@ Two Cloud Run services + Firestore. All Go.
 | `internal/trusted` | **non-agentic** consent + signing endpoints; loads user key from Secret Manager; signs only after explicit UI approval | ap2, secretmanager |
 | `internal/store` | Firestore repositories + ADK `session.Service` implementation backed by Firestore — **built days 1–2 with a go/no-go at end of day 2**; fallback: pin Cloud Run to min=max=1 instance and document the tradeoff | firestore |
 | `internal/briefing` | fan-out orchestration (`errgroup` + context), one route sub-task per calendar event | tools, engine |
+| `internal/guardian` | **Plan Guardian** — reads `action_plans`, collects adherence signals (Calendar block state, AP2 delivery, recipe executions), computes adherence score, emits drift nudges, drives the weekly 2-question check-in, promotes ledger entries projected→confirmed, renders Progress Report via ReportTool | store, tools, engine |
 | `web/` | React + TS + Vite + Tailwind (tokens generated from `docs/design/design-system.json`) | — |
 
 Contract test for each unit: what it does, how it's used, what it depends on — table above is the checklist.
@@ -83,7 +86,8 @@ Implements the merchant half of AP2 v0.2 **and explicitly doubles as the simulat
 | `catalog` | recipes: trigger pattern, capability ∈ **canonical enum {`vision`, `calendar_write`, `maps_routes`, `weather_flood`, `gmail_draft`, `ap2_purchase`, `report_gen`}** (single source of truth, referenced by PRD F4), class (executable/advised/roadmap), cost model {upfront, monthly_running} |
 | `proposals` | routine ref, recipe ref, payback months, status (proposed/approved/executed/declined) |
 | `mandates` | AP2 audit trail: checkout JWT, mandate JWTs, receipts, timestamps, status |
-| `savings_ledger` | weekly entries {hours_recovered, brl_recovered, source recipe, `mandate_ref` → `mandates` doc when the entry stems from an AP2 purchase (F9 promises verifiable receipts attached)} |
+| `savings_ledger` | weekly entries {hours_recovered, brl_recovered, source recipe, **`confirmed: bool`** (projected until the Guardian verifies), `mandate_ref` → `mandates` doc when the entry stems from an AP2 purchase (F9 promises verifiable receipts attached)} |
+| `action_plans` | one per approved proposal: {proposal_ref, expected_savings {h, brl}/week, expected_signals[] (calendar_block, ap2_delivery, recipe_run), status: on_track/drifting/done/abandoned, adherence_score, last_checkin} |
 | `sessions` | ADK session state (custom `session.Service`) — Cloud Run scales stateless |
 | `briefings` | per-day cards {event, departure_time, route, weather, clothing, flood_risk} |
 
@@ -131,7 +135,7 @@ Voice input: browser MediaRecorder → audio bytes → Gemini multimodal input d
 ## 9. Deployment & observability
 
 - Two Cloud Run services (`automate-me`, `merchant-agent`), deploy via gcloud in GitHub Actions.
-- Firestore (native mode), Secret Manager (ECDSA keys, API keys), Cloud Scheduler (watcher + morning briefing).
+- Firestore (native mode), Secret Manager (ECDSA keys, API keys), Cloud Scheduler (watcher + morning briefing + Guardian daily/weekly passes).
 - ADK telemetry → Cloud Logging/Trace; these console views are the demo's "running on Google Cloud" proof.
 - README: spin-up instructions (required by rules), architecture diagram, `.env.example`.
 

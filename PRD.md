@@ -41,12 +41,13 @@ Reference signals:
 4. **Rank** — automations from the catalog are ranked by **payback**: `payback_months = upfront_cost ÷ (monthly_time_value_recovered − monthly_running_cost)`. Automations with no upfront cost (subscriptions, services) rank by **net monthly savings** instead; negative-net automations are never proposed. Exact formulas live in the deterministic Value Engine with table-driven tests.
 5. **Execute** — with explicit human approval, the agent acts: AP2 purchase, Calendar writes, Maps-optimized plans, Gmail drafts, Teams report.
 6. **Prove** — the Savings Ledger accumulates: *"You bought back 22 h = R$1,100 this month."* (Yohana's lesson: without measurable proof, retention dies.)
+7. **Follow through** — the Plan Guardian agent watches the plan in action: automatic signals + a weekly 2-question check-in verify that what was planned is actually happening, the ledger splits **projected vs confirmed** savings, and a Progress Report with updated charts shows implemented automations, adherence, and drift nudges.
 
 ## 5. Features
 
 ### 5.1 Must have (MVP)
 
-Priority order is the listing order: **F1–F6 are the demoable core; F7–F9 degrade gracefully if the schedule slips.**
+Priority order is the listing order: **F1–F6 are the demoable core; F7–F10 degrade gracefully if the schedule slips.**
 
 - **F1 — Conversational onboarding** (voice push-to-talk + text + photo ingestion). Audio goes directly into Gemini as multimodal input (no separate STT); spoken replies via Cloud Text-to-Speech. Photo of a handwritten list/paper calendar → structured tasks (Gemini vision) → routed to the Routine Analyst.
 - **F2 — Value Engine** (deterministic Go, not an LLM): Cost of Inaction + payback ranking. Money math is never hallucinated.
@@ -56,7 +57,8 @@ Priority order is the listing order: **F1–F6 are the demoable core; F7–F9 de
 - **F6 — AP2 autonomous purchase** — real AP2 **v0.2** flow (Checkout Mandate + Payment Mandate, ECDSA-signed JWTs) against a merchant agent we build as a separate A2A service. Payment settlement is **simulated** and labeled as such. Non-agentic Trusted Surface collects consent (per AP2 threat model).
 - **F7 — Calendar Watcher** — scheduled background scan (Cloud Scheduler) detects new recurring tasks in Google Calendar, refreshes the routine profile, and pushes new proposals. Calendar is a **secondary** source; declared routine is primary.
 - **F8 — Teams mode** — team task list in (text/spreadsheet/photo of a whiteboard) + average team hourly cost → **Automation Opportunities Report**: ranked tasks, suggested automation per task, projected annual savings; shareable report page.
-- **F9 — Savings Ledger** — cumulative proof of hours/R$ bought back, with AP2 receipts (verifiable JWTs) attached.
+- **F9 — Savings Ledger** — cumulative proof of hours/R$ bought back, with AP2 receipts (verifiable JWTs) attached. Every entry is flagged **projected or confirmed** (see F10).
+- **F10 — Plan Guardian** — every approved proposal becomes an **Action Plan** (expected savings + expected signals). A dedicated agent (Cloud Scheduler: daily light pass, weekly full pass) verifies the plan in action: collects automatic signals (Calendar blocks kept/moved/deleted, AP2 delivery completed, briefing blocks accepted, recipes executed), detects drift (planned-but-not-executed → chat nudge: *"the dishwasher arrived 3 days ago and you still logged 40 min of dishes yesterday — what's blocking?"*), runs a weekly check-in of at most 2 conversational questions, promotes ledger entries from projected to **confirmed**, and generates a **Progress Report** with updated charts (evolution curve with projected × confirmed bands, before/after), implemented-automation list, adherence %, and next-best actions — reusing the Teams report page; optionally drafts an email with the report link. No new capabilities required. If the schedule slips, the check-in degrades to signals-only.
 
 ### 5.2 Executable catalog recipes (MVP — 8 recipes, every one mapped to a timeline day)
 
@@ -112,7 +114,7 @@ Cut from MVP scope after adversarial spec review (each needs bespoke orchestrati
 - **Required stack:** Gemini 3.5 ✓ (gemini-3.5-flash) · ADK ✓ (ADK Go v2) · Google Cloud ✓ (Cloud Run, Firestore, Secret Manager, Cloud Scheduler, Maps Platform, Cloud TTS, Cloud Logging).
 - **Deliverables:** public repo + README spin-up instructions · architecture diagram · ~4-min demo video proving Google Cloud backend · hosted URL (encouraged).
 - **Bonus points:** build-in-public blog post (explicitly stating it was built for this hackathon) + social post with **#AllThingsAgenticHackathon**.
-- **Demo script (~220s of content in a ~4-min uncut take — 20s transition slack):** photo of handwritten list → structured tasks (30s) · push-to-talk "I wash dishes an hour a day" → dashboard updates live (30s) · Life P&L with before/after chart (30s) · Daily Briefing with flood alert + departure block (30s) · dishwasher proposal → consent → **AP2 mandates visualized** → receipt + delivery on Calendar (75s) · Teams report flash (10s) · Savings Ledger + Cloud Run console/logs (15s). Ledger's evolution curve shows seeded history **labeled "simulated weeks"**, plus at least one real entry generated live during the take.
+- **Demo script (~230s of content in a ~4-min uncut take — 10s transition slack):** photo of handwritten list → structured tasks (30s) · push-to-talk "I wash dishes an hour a day" → dashboard updates live (30s) · Life P&L with before/after chart (30s) · Daily Briefing with flood alert + departure block (30s) · dishwasher proposal → consent → **AP2 mandates visualized** → receipt + delivery on Calendar (75s) · Teams report flash (10s) · Savings Ledger (projected × confirmed bands) + **Plan Guardian status ("2 of 3 automations active, 1 drifting → nudge sent")** + Cloud Run console/logs (25s). Ledger's evolution curve shows seeded history **labeled "simulated weeks"**, plus at least one real entry generated live during the take.
 - **Action item (user):** claim the $150 GCP credits form before Aug 28, 12:00 PT.
 
 ## 9. Success metrics
@@ -132,7 +134,7 @@ Cut from MVP scope after adversarial spec review (each needs bespoke orchestrati
 | 3–5 | Value Engine + Routine Analyst (interview + photo) + dashboard + **voice I/O (push-to-talk audio into Gemini, Cloud TTS reply)** + vision recipes (boleto, school note) + batching/delegation |
 | 6–8 | AP2 v0.2 (mandates, merchant A2A service, trusted surface) |
 | 9–10 | Daily Briefing (Maps/Weather/GeoSampa) + Calendar Watcher + commute recipes |
-| 11–12 | Teams report, Savings Ledger, Crextio polish |
+| 11–12 | Teams report, Savings Ledger, **Plan Guardian (action plans, signals, check-in, Progress Report)**, Crextio polish |
 | 13–14 | Demo video, architecture diagram, README, blog + social post |
 | 15–17 | Buffer + early submission |
 
