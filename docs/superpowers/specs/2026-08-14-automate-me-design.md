@@ -73,6 +73,8 @@ Contract test for each unit: what it does, how it's used, what it depends on —
 
 Separate Go module, **also built on adk-go's `adka2a` server surface** — both ends of the wire use the same pinned a2a-go line (v0.3.x via adk-go), making protocol compatibility structural; a2a-go v2.x is never imported by either module. Exposes an A2A agent card + skills (`search_catalog`, `create_checkout`, `submit_checkout_mandate`, `submit_payment_mandate`).
 
+**Transport split (implementation decision):** the AP2 mandate rail runs on deterministic HTTP+JSON endpoints (`/ap2/create-checkout`, `/ap2/checkout-mandate`, `/ap2/payment-mandate`) — AP2 MUST: "validation and processing MUST happen in deterministic code" — while the A2A surface exposes the conversational skills (agent card + `search_catalog`). JWS tokens never pass through an LLM on either side.
+
 Implements the merchant half of AP2 v0.2 **and explicitly doubles as the simulated Credential Provider + Merchant Payment Processor** (one actor may hold several AP2 roles; the simulation labels all three): returns the signed Checkout JWT; verifies the **Checkout Mandate** against it (signature, exact `vct`, hash binding) → Checkout Receipt; verifies the **Payment Mandate** the same way (signature, `vct: mandate.payment.1`, checkout-hash binding) **before** settlement → Payment Receipt. Settlement is an in-process simulation, labeled as simulation in every artifact. Own ECDSA key in Secret Manager.
 
 **Key exchange:** the user's public JWK is embedded in the `create_checkout` request and pinned by the merchant for that checkout; all mandate verification for the checkout uses the pinned key.
