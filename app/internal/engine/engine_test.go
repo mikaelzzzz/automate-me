@@ -84,11 +84,11 @@ func TestRank(t *testing.T) {
 		return Candidate{Automation: a, Eval: Evaluate(a, rate)}
 	}
 	cands := []Candidate{
-		mk("dishwasher", 3000_00, 0, 55, 30),     // payback ≈ 2.18
-		mk("robot-vacuum", 2000_00, 0, 30, 8),    // payback = 10
-		mk("delivery-sub", 0, 80_00, 120, 4.33),  // payback 0, net 353
-		mk("cleaner", 0, 400_00, 240, 4.33),      // payback 0, net 466
-		mk("bad-deal", 100_00, 500_00, 10, 4),    // not proposable
+		mk("dishwasher", 3000_00, 0, 55, 30),    // payback ≈ 2.18
+		mk("robot-vacuum", 2000_00, 0, 30, 8),   // payback = 10
+		mk("delivery-sub", 0, 80_00, 120, 4.33), // payback 0, net 353
+		mk("cleaner", 0, 400_00, 240, 4.33),     // payback 0, net 466
+		mk("bad-deal", 100_00, 500_00, 10, 4),   // not proposable
 	}
 	got := Rank(cands)
 	wantOrder := []string{"cleaner", "delivery-sub", "dishwasher", "robot-vacuum"}
