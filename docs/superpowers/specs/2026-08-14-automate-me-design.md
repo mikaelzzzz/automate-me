@@ -87,7 +87,7 @@ Implements the merchant half of AP2 v0.2 **and explicitly doubles as the simulat
 | `proposals` | routine ref, recipe ref, payback months, status (proposed/approved/executed/declined) |
 | `mandates` | AP2 audit trail: checkout JWT, mandate JWTs, receipts, timestamps, status |
 | `savings_ledger` | weekly entries {hours_recovered, brl_recovered, source recipe, **`confirmed: bool`** (projected until the Guardian verifies), `mandate_ref` → `mandates` doc when the entry stems from an AP2 purchase (F9 promises verifiable receipts attached)} |
-| `action_plans` | one per approved proposal: {proposal_ref, expected_savings {h, brl}/week, expected_signals[] (calendar_block, ap2_delivery, recipe_run), status: on_track/drifting/done/abandoned, adherence_score, last_checkin} |
+| `action_plans` | one per approved proposal: {proposal_ref, expected_savings {h, brl}/week, expected_signals[] (calendar_block, ap2_delivery, recipe_run — briefing-block acceptance is a `calendar_block` signal; no separate type), status: on_track/drifting/done/abandoned, adherence_score, last_checkin} |
 | `sessions` | ADK session state (custom `session.Service`) — Cloud Run scales stateless |
 | `briefings` | per-day cards {event, departure_time, route, weather, clothing, flood_risk} |
 
