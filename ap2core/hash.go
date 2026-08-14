@@ -27,10 +27,22 @@ func PresentedToken(mandateJWS string) string {
 	return mandateJWS + "~"
 }
 
-// ReferenceHash computes a Receipt's `reference`: the hash of the received
-// closed Mandate "calculated in the same manner as sd_hash"
-// (agent_authorization.md:509-513) — i.e. over the presented token string.
+// ReferenceHash computes a Receipt's `reference` over the bare leaf JWS.
+//
+// DOCUMENTED DEVIATION: the spec prose says the reference is "calculated in
+// the same manner as sd_hash" (agent_authorization.md:509-513, which would
+// include disclosures and the trailing "~"), but the reference SDK
+// deliberately hashes only the leaf issuer JWT for stability across hops and
+// disclosure choices (docs/research/ap2-v02-schema.md §4.5, §12.1). The two
+// manners produce different values. We follow the SDK for interoperability;
+// ReferenceHashSDManner is kept for cross-checking.
 func ReferenceHash(mandateJWS string) string {
+	return b64uSHA256(mandateJWS)
+}
+
+// ReferenceHashSDManner is the literal spec-prose reading (sd_hash manner,
+// over the presented token including the trailing "~").
+func ReferenceHashSDManner(mandateJWS string) string {
 	return b64uSHA256(PresentedToken(mandateJWS))
 }
 

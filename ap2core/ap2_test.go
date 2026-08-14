@@ -234,10 +234,14 @@ func TestJWKRoundTrip(t *testing.T) {
 }
 
 func TestReferenceHashManner(t *testing.T) {
-	// reference is computed over the presented token (token + trailing "~"),
-	// the sd_hash manner — not over the bare JWS.
-	if ReferenceHash("abc") != b64uSHA256("abc~") {
-		t.Fatal("ReferenceHash must hash the presented token including trailing tilde")
+	// ReferenceHash follows the reference SDK (bare leaf JWS); the sd_hash
+	// manner from the spec prose is kept as a named variant. See hash.go for
+	// the documented deviation.
+	if ReferenceHash("abc") != b64uSHA256("abc") {
+		t.Fatal("ReferenceHash must hash the bare leaf JWS (SDK manner)")
+	}
+	if ReferenceHashSDManner("abc") != b64uSHA256("abc~") {
+		t.Fatal("ReferenceHashSDManner must include the trailing tilde")
 	}
 	if CheckoutHash("abc") != b64uSHA256("abc") {
 		t.Fatal("CheckoutHash must hash the bare compact JWS string")
