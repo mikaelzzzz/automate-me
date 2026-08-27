@@ -21,25 +21,47 @@ export interface Pnl {
   hourly_rate_cents: number
 }
 
+export type ProposalStatus = 'proposed' | 'approved' | 'executed' | 'declined'
+
 export interface Proposal {
   id: string
   user_id: string
   task_id: string
   recipe_id: string
+  recipe_title: string
+  recipe_class: 'executable' | 'advised' | 'roadmap' | ''
+  /** The agent can buy it through the AP2 rail (recipe has a product). */
+  executable: boolean
   monthly_savings_cents: number
   net_monthly_cents: number
   payback_months: number
-  status: 'proposed' | 'approved' | 'executed' | 'declined'
+  status: ProposalStatus
 }
 
 export interface LedgerEntry {
   id: string
   week_start: string
   recipe_id: string
+  recipe_title: string
   hours_recovered: number
   brl_recovered_cents: number
   confirmed: boolean
   mandate_ref?: string
+}
+
+/** AP2 audit trail: the four signed artifacts of one purchase. */
+export interface MandateRecord {
+  id: string
+  proposal_id: string
+  checkout_id: string
+  checkout_jwt: string
+  checkout_mandate: string
+  checkout_receipt: string
+  payment_mandate: string
+  payment_receipt: string
+  status: 'pending' | 'completed' | 'failed'
+  created_at: string
+  updated_at: string
 }
 
 export interface ConsentResult {
@@ -76,6 +98,7 @@ export const api = {
       body: JSON.stringify({ proposal_id: proposalId }),
     }).then((r) => j<ConsentResult>(r)),
   ledger: () => fetch('/app/api/ledger').then((r) => j<LedgerEntry[]>(r)),
+  mandates: () => fetch('/app/api/mandates').then((r) => j<MandateRecord[]>(r)),
 }
 
 // Money: integer centavos → "R$1,500.00". Never do float math on money.

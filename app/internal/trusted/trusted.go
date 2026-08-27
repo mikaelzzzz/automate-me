@@ -142,9 +142,12 @@ func (s *Surface) ExecuteConsentedPurchase(ctx context.Context, userID, proposal
 	if err := s.Store.PutProposal(ctx, prop); err != nil {
 		return ConsentResult{}, err
 	}
+	// The purchase starts recovering next week: one projected weekly entry
+	// (net savings / 4.33) the Guardian later confirms or corrects.
+	weeklyCents, weeklyHours := projectedWeek(ctx, s.Store, userID, prop)
 	if err := s.Store.PutLedgerEntry(ctx, store.LedgerEntry{
-		ID: "led-" + rec.ID, UserID: userID, WeekStart: now,
-		RecipeID: prop.RecipeID, HoursRecovered: 0, BRLRecovered: 0,
+		ID: "led-" + rec.ID, UserID: userID, WeekStart: now.AddDate(0, 0, 7),
+		RecipeID: prop.RecipeID, HoursRecovered: weeklyHours, BRLRecovered: weeklyCents,
 		Confirmed: false, MandateRef: rec.ID,
 	}); err != nil {
 		return ConsentResult{}, err
@@ -155,6 +158,22 @@ func (s *Surface) ExecuteConsentedPurchase(ctx context.Context, userID, proposal
 		CheckoutReceipt: rec.CheckoutReceipt, PaymentReceipt: rec.PaymentReceipt,
 		Completed: true,
 	}, nil
+}
+
+// projectedWeek converts a proposal's monthly verdict into one week of
+// projected recovery. Integer centavos; hours only for display.
+func projectedWeek(ctx context.Context, st store.Store, userID string, p store.Proposal) (int64, float64) {
+	const weeksPerMonth = 4.33
+	cents := int64(float64(p.NetMonthlyCents)/weeksPerMonth + 0.5)
+	if cents < 0 {
+		cents = 0
+	}
+	u, err := st.GetUser(ctx, userID)
+	if err != nil || u.HourlyRateCents <= 0 {
+		return cents, 0
+	}
+	hours := float64(p.MonthlySavingsCents) / float64(u.HourlyRateCents) / weeksPerMonth
+	return cents, float64(int(hours*10+0.5)) / 10
 }
 
 func (s *Surface) fail(ctx context.Context, rec store.MandateRecord, checkout ap2core.Checkout, reason string) (ConsentResult, error) {

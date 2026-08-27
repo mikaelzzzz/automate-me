@@ -13,7 +13,7 @@ export function ConsentModal({
   proposal: Proposal
   recipeTitle: string
   onClose: () => void
-  onDone: () => void
+  onDone: (res: ConsentResult | null) => void
 }) {
   const [phase, setPhase] = useState<'review' | 'signing' | 'done' | 'error'>('review')
   const [result, setResult] = useState<ConsentResult | null>(null)
@@ -27,7 +27,7 @@ export function ConsentModal({
       setResult(res)
       setPhase(res.completed ? 'done' : 'error')
       if (!res.completed) setError(res.failure_reason ?? 'purchase failed')
-      onDone()
+      onDone(res)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setPhase('error')

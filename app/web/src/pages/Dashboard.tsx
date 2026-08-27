@@ -1,48 +1,44 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { LedgerEntry, Pnl, Proposal } from '../lib/api'
 import { brl } from '../lib/api'
+import { useCountUp } from '../lib/useCountUp'
 import { BeforeAfterChart } from '../components/BeforeAfterChart'
 import { EvolutionChart } from '../components/EvolutionChart'
-import { ConsentModal } from '../components/ConsentModal'
-
-const RECIPE_TITLES: Record<string, string> = {
-  dishwasher: 'Buy a dishwasher (agent purchase)',
-  'commute-audit': 'Commute audit',
-  'leave-on-time': 'Leave-on-time blocks',
-  'calendar-batching': 'Chore batching',
-  'delegation-draft': 'Delegation drafts',
-  'boleto-pile': 'Boleto pile to calendar',
-  'school-note': 'School note to calendar',
-  'teams-report': 'Team automation report',
-  'robot-vacuum': 'Robot vacuum',
-  'grocery-delivery': 'Grocery delivery subscription',
-  'laundry-service': 'Wash-and-fold service',
-  'auto-pay': 'Auto-pay migration',
-  'farmacia-popular': 'Farmácia Popular check',
-  'sne-discount': 'SNE 40% fine discount',
-  'car-worth-it': 'Is your car worth it?',
-  'virtual-assistant': 'Delegate to a virtual assistant',
-  'forgotten-money': 'Forgotten money ritual',
-}
 
 export function Dashboard({
   pnl,
   proposals,
   ledger,
-  refresh,
+  onBuy,
+  onAsk,
+  onShowLedger,
 }: {
   pnl: Pnl
   proposals: Proposal[]
   ledger: LedgerEntry[]
-  refresh: () => void
+  onBuy: (p: Proposal) => void
+  onAsk: (text: string) => void
+  onShowLedger: () => void
 }) {
-  const [consentFor, setConsentFor] = useState<Proposal | null>(null)
   const tasks = pnl.tasks ?? []
-  const annual = pnl.total_cents_month * 12
+  const annual = useCountUp(pnl.total_cents_month * 12)
+  const monthly = useCountUp(pnl.total_cents_month)
+  const hoursMonth = useCountUp(pnl.total_hours_month)
 
   const recovered = useMemo(
-    () => ledger.reduce((s, e) => s + e.brl_recovered_cents, 0),
+    () => ledger.filter((e) => e.confirmed).reduce((s, e) => s + e.brl_recovered_cents, 0),
     [ledger],
+  )
+  const recoveredAnim = useCountUp(recovered)
+
+  const ranked = useMemo(
+    () =>
+      [...proposals].sort((a, b) => {
+        const order = { approved: 0, proposed: 1, executed: 2, declined: 3 }
+        const d = order[a.status] - order[b.status]
+        return d !== 0 ? d : b.net_monthly_cents - a.net_monthly_cents
+      }),
+    [proposals],
   )
 
   return (
@@ -54,67 +50,74 @@ export function Dashboard({
           Your routine is leaking, at {brl(pnl.hourly_rate_cents)}/h of your time
         </p>
         <h1
-          className="m-0 leading-tight"
+          className="m-0 leading-tight tabular"
           style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.2rem, 5vw, 3.2rem)', fontWeight: 600 }}
         >
-          {brl(annual)} <span className="text-ink-tertiary text-2xl">a year</span>
+          {brl(Math.round(annual))} <span className="text-ink-tertiary text-2xl">a year</span>
         </h1>
-        <p className="text-ink-secondary mt-1 text-sm">
-          {brl(pnl.total_cents_month)} every month · {pnl.total_hours_month.toFixed(0)} hours you don't get back
+        <p className="text-ink-secondary mt-1 text-sm tabular">
+          {brl(Math.round(monthly))} every month · {hoursMonth.toFixed(0)} hours you don't get back
         </p>
       </header>
 
       {/* KPI pills */}
       <div className="flex flex-wrap gap-3 rise" style={{ animationDelay: '60ms' }}>
-        <Kpi label="hours leaking / month" value={`${pnl.total_hours_month.toFixed(0)} h`} tone="leak" />
-        <Kpi label="money leaking / month" value={brl(pnl.total_cents_month)} tone="leak" />
-        <Kpi label="bought back so far" value={brl(recovered)} tone="win" />
+        <Kpi label="hours leaking / month" value={`${hoursMonth.toFixed(0)} h`} tone="leak" />
+        <Kpi label="money leaking / month" value={brl(Math.round(monthly))} tone="leak" />
+        <Kpi label="bought back so far" value={brl(Math.round(recoveredAnim))} tone="win" onClick={onShowLedger} />
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-5 xl:grid-cols-2">
         <section className="bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-5 rise" style={{ animationDelay: '120ms' }}>
           <h2 className="m-0 mb-4 text-lg font-medium">Before / after automation</h2>
           <BeforeAfterChart tasks={tasks} proposals={proposals} />
         </section>
 
         <section className="bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-5 rise" style={{ animationDelay: '180ms' }}>
-          <h2 className="m-0 mb-4 text-lg font-medium">Time bought back</h2>
+          <div className="flex items-baseline justify-between mb-4">
+            <h2 className="m-0 text-lg font-medium">Time bought back</h2>
+            <button onClick={onShowLedger} className="text-xs text-ink-secondary hover:text-ink cursor-pointer bg-transparent">
+              ledger →
+            </button>
+          </div>
           <EvolutionChart entries={ledger} />
         </section>
       </div>
 
       {/* Proposals — goal gradient: payback rendered as distance to break-even */}
       <section className="rise" style={{ animationDelay: '240ms' }}>
-        <h2 className="m-0 mb-3 text-lg font-medium">What your agent proposes</h2>
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="m-0 text-lg font-medium">What your agent proposes</h2>
+          {proposals.length > 0 && (
+            <span className="text-xs text-ink-tertiary">{proposals.length} proposals · ranked by monthly savings</span>
+          )}
+        </div>
         {proposals.length === 0 ? (
-          <div className="bg-surface/85 rounded-card hairline p-6 text-sm text-ink-secondary">
-            Describe one routine to the agent (bottom right) and proposals appear here, ranked by
-            payback.
+          <div className="bg-surface/85 rounded-card hairline p-6 text-sm text-ink-secondary flex flex-wrap items-center gap-3">
+            <span className="flex-1 min-w-[240px]">Describe one routine to the agent and proposals appear here, ranked by payback.</span>
+            <button onClick={() => onAsk('What should I automate first?')} className="rounded-pill bg-ink text-white text-sm px-4 py-2 cursor-pointer">
+              Ask the agent
+            </button>
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {proposals.map((p) => (
-              <ProposalCard key={p.id} p={p} onBuy={() => setConsentFor(p)} />
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {ranked.map((p) => (
+              <ProposalCard key={p.id} p={p} onBuy={() => onBuy(p)} onAsk={onAsk} onShowLedger={onShowLedger} />
             ))}
           </div>
         )}
       </section>
-
-      {consentFor && (
-        <ConsentModal
-          proposal={consentFor}
-          recipeTitle={RECIPE_TITLES[consentFor.recipe_id] ?? consentFor.recipe_id}
-          onClose={() => setConsentFor(null)}
-          onDone={refresh}
-        />
-      )}
     </div>
   )
 }
 
-function Kpi({ label, value, tone }: { label: string; value: string; tone: 'leak' | 'win' }) {
+function Kpi({ label, value, tone, onClick }: { label: string; value: string; tone: 'leak' | 'win'; onClick?: () => void }) {
+  const Tag = onClick ? 'button' : 'div'
   return (
-    <div className="rounded-pill bg-white/60 hairline px-4 py-2.5 flex items-center gap-3 min-w-[210px]">
+    <Tag
+      onClick={onClick}
+      className={`rounded-pill bg-white/60 hairline px-4 py-2.5 flex items-center gap-3 min-w-[210px] text-left ${onClick ? 'cursor-pointer hover:bg-white/90 transition-colors' : ''}`}
+    >
       <span
         className="w-2 h-2 rounded-full"
         style={{ background: tone === 'leak' ? '#a07c12' : '#2e7d32' }}
@@ -124,17 +127,32 @@ function Kpi({ label, value, tone }: { label: string; value: string; tone: 'leak
         <div className="text-xs text-ink-secondary leading-none mb-1">{label}</div>
         <div className="tabular font-semibold leading-none">{value}</div>
       </div>
-    </div>
+    </Tag>
   )
 }
 
-function ProposalCard({ p, onBuy }: { p: Proposal; onBuy: () => void }) {
-  const title = RECIPE_TITLES[p.recipe_id] ?? p.recipe_id
+function ProposalCard({
+  p,
+  onBuy,
+  onAsk,
+  onShowLedger,
+}: {
+  p: Proposal
+  onBuy: () => void
+  onAsk: (text: string) => void
+  onShowLedger: () => void
+}) {
+  const title = p.recipe_title || p.recipe_id
   const executed = p.status === 'executed'
+  const approved = p.status === 'approved'
   // goal gradient: 2.1 months to break even, bar already moving
   const paybackPct = p.payback_months <= 0 ? 100 : Math.min(100 / p.payback_months, 92)
   return (
-    <div className="bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-4 flex flex-col gap-2">
+    <div
+      className={`bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-4 flex flex-col gap-2 transition-shadow ${
+        approved ? 'ring-2 ring-sun/70' : ''
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
         <span className="font-medium text-sm">{title}</span>
         <StatusPill status={p.status} />
@@ -143,29 +161,37 @@ function ProposalCard({ p, onBuy }: { p: Proposal; onBuy: () => void }) {
         recovers <span className="text-success font-medium tabular">{brl(p.net_monthly_cents)}</span>
         /month
       </div>
-      {p.payback_months > 0 && Number.isFinite(p.payback_months) && (
-        <div>
-          <div className="flex justify-between text-xs text-ink-tertiary mb-1">
-            <span>pays for itself</span>
-            <span className="tabular">{p.payback_months.toFixed(1)} months</span>
-          </div>
-          <div className="h-2 rounded-pill bg-[rgba(36,35,33,0.06)] overflow-hidden">
-            <div className="h-full rounded-pill bg-sun" style={{ width: `${paybackPct}%` }} />
-          </div>
+      <div>
+        <div className="flex justify-between text-xs text-ink-tertiary mb-1">
+          <span>pays for itself</span>
+          <span className="tabular">{p.payback_months > 0 ? `${p.payback_months.toFixed(1)} months` : 'immediately'}</span>
         </div>
-      )}
-      {p.recipe_id === 'dishwasher' && !executed && (
+        <div className="h-2 rounded-pill bg-[rgba(36,35,33,0.06)] overflow-hidden">
+          <div className="h-full rounded-pill bg-sun" style={{ width: `${paybackPct}%` }} />
+        </div>
+      </div>
+
+      {executed ? (
+        <button
+          onClick={onShowLedger}
+          className="mt-1 text-xs text-success bg-success-tint hover:bg-[#e3f2de] rounded-pill px-3 py-1.5 inline-flex items-center gap-1.5 self-start cursor-pointer"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-success" /> purchased via AP2 · receipts on ledger →
+        </button>
+      ) : p.executable ? (
         <button
           onClick={onBuy}
-          className="mt-1 rounded-pill bg-ink text-white text-sm py-2 cursor-pointer font-medium"
+          className={`mt-1 rounded-pill text-sm py-2 cursor-pointer font-medium ${approved ? 'bg-ink text-white pop' : 'bg-ink text-white'}`}
         >
-          Let the agent buy it · {p.payback_months.toFixed(1)}-month payback
+          {approved ? 'Review & sign · AP2' : `Let the agent buy it · ${p.payback_months.toFixed(1)}-month payback`}
         </button>
-      )}
-      {executed && (
-        <div className="text-xs text-success bg-success-tint rounded-pill px-3 py-1.5 inline-flex items-center gap-1.5 self-start">
-          <span className="w-1.5 h-1.5 rounded-full bg-success" /> purchased via AP2 · receipts on ledger
-        </div>
+      ) : (
+        <button
+          onClick={() => onAsk(`How do I set up "${title}"? Give me the concrete steps.`)}
+          className="mt-1 rounded-pill border-subtle bg-surface-raised text-sm py-2 cursor-pointer hover:bg-sun-soft/40 transition-colors"
+        >
+          {approved ? 'Ask the agent for the steps' : 'Ask the agent how'}
+        </button>
       )}
     </div>
   )

@@ -27,6 +27,29 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /app/api/proposals/{id}/approve", h.approve)
 	mux.HandleFunc("POST /app/api/trusted/consent", h.consent)
 	mux.HandleFunc("GET /app/api/ledger", h.ledger)
+	mux.HandleFunc("GET /app/api/mandates", h.mandates)
+}
+
+// proposalView enriches a proposal with catalog facts the SPA needs to render
+// it without a client-side copy of the catalog.
+type proposalView struct {
+	store.Proposal
+	RecipeTitle string `json:"recipe_title"`
+	RecipeClass string `json:"recipe_class"`
+	// Executable: the agent can buy it through the AP2 rail (has a product).
+	Executable bool `json:"executable"`
+}
+
+type ledgerView struct {
+	store.LedgerEntry
+	RecipeTitle string `json:"recipe_title"`
+}
+
+func recipeTitle(id string) string {
+	if r, ok := findRecipe(id); ok {
+		return r.Title
+	}
+	return id
 }
 
 type pnlResponse struct {
@@ -71,7 +94,17 @@ func (h *Handler) proposals(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, ps)
+	out := make([]proposalView, 0, len(ps))
+	for _, p := range ps {
+		v := proposalView{Proposal: p, RecipeTitle: p.RecipeID}
+		if rec, ok := findRecipe(p.RecipeID); ok {
+			v.RecipeTitle = rec.Title
+			v.RecipeClass = string(rec.Class)
+			v.Executable = rec.Class == catalog.ClassExecutable && rec.ProductID != ""
+		}
+		out = append(out, v)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +168,25 @@ func (h *Handler) ledger(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, entries)
+	out := make([]ledgerView, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, ledgerView{LedgerEntry: e, RecipeTitle: recipeTitle(e.RecipeID)})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// mandates exposes the AP2 audit trail (signed JWTs) so the ledger can show
+// verifiable receipts. Demo scope: everything for the demo user.
+func (h *Handler) mandates(w http.ResponseWriter, r *http.Request) {
+	recs, err := h.Store.ListMandateRecords(r.Context(), h.UserID(r))
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	if recs == nil {
+		recs = []store.MandateRecord{}
+	}
+	writeJSON(w, http.StatusOK, recs)
 }
 
 func findRecipe(id string) (catalog.Recipe, bool) {

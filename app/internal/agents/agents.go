@@ -5,6 +5,7 @@ package agents
 
 import (
 	"fmt"
+	"sort"
 
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -167,6 +168,9 @@ type proposalRow struct {
 	NetMonthly     string `json:"net_monthly"`
 	PaybackMonths  string `json:"payback_months"`
 	Executable     bool   `json:"agent_can_execute"`
+
+	netCents int64   // sort keys, not serialised
+	payback  float64 //
 }
 type proposeOut struct {
 	Proposals []proposalRow `json:"proposals"`
@@ -221,10 +225,20 @@ func (d Deps) proposeAutomations() (tool.Tool, error) {
 					ProposalID: p.ID, Recipe: r.Title, Class: string(r.Class),
 					MonthlySavings: brl(ev.MonthlySavingsCents), NetMonthly: brl(ev.NetMonthlyCents),
 					PaybackMonths: paybackText(ev.PaybackMonths),
-					Executable:    r.Class == catalog.ClassExecutable,
+					Executable:    r.Class == catalog.ClassExecutable && r.ProductID != "",
+					netCents:      ev.NetMonthlyCents,
+					payback:       ev.PaybackMonths,
 				})
 			}
 		}
+		// Rank: biggest net monthly recovery first; ties → faster payback.
+		sort.SliceStable(out.Proposals, func(i, j int) bool {
+			a, b := out.Proposals[i], out.Proposals[j]
+			if a.netCents != b.netCents {
+				return a.netCents > b.netCents
+			}
+			return a.payback < b.payback
+		})
 		return out, nil
 	})
 }
@@ -233,8 +247,10 @@ type approveIn struct {
 	ProposalID string `json:"proposal_id" jsonschema:"The proposal the user wants to approve"`
 }
 type approveOut struct {
-	Status string `json:"status"`
-	Next   string `json:"next"`
+	Status     string `json:"status"`
+	Recipe     string `json:"recipe"`
+	Executable bool   `json:"agent_can_execute"`
+	Next       string `json:"next"`
 }
 
 func (d Deps) approveProposal() (tool.Tool, error) {
@@ -254,10 +270,20 @@ func (d Deps) approveProposal() (tool.Tool, error) {
 		if err := d.Store.PutProposal(ctx, p); err != nil {
 			return approveOut{}, err
 		}
-		return approveOut{
-			Status: "approved",
-			Next:   "Tell the user to review and confirm on the consent screen; the agent cannot sign payment mandates.",
-		}, nil
+		out := approveOut{Status: "approved", Recipe: p.RecipeID}
+		for _, r := range catalog.Seed() {
+			if r.ID != p.RecipeID {
+				continue
+			}
+			out.Recipe = r.Title
+			out.Executable = r.Class == catalog.ClassExecutable && r.ProductID != ""
+		}
+		if out.Executable {
+			out.Next = "Purchase: tell the user to review and sign on the consent screen (the 'Review & sign' button); the agent cannot sign payment mandates."
+		} else {
+			out.Next = "Guided recipe, nothing to buy: give the user 2-4 concrete setup steps for this recipe right now. Do not mention a consent screen."
+		}
+		return out, nil
 	})
 }
 
@@ -300,7 +326,7 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 		Name:        "automation_advisor",
 		Description: "Matches routine tasks to automation recipes, presents payback rankings, and records user approvals.",
 		Model:       llm,
-		Instruction: "You recommend automations. Call propose_automations to compute ranked proposals (the engine already filtered bad deals). Present the top 3 with payback in plain words ('pays for itself in about 2 months'); mention that more exist. When the user wants one, call approve_proposal — purchases then go through the consent screen (the 'Let the agent buy it' button on the dashboard); you never handle payments yourself." + style,
+		Instruction: "You recommend automations. Call propose_automations to compute ranked proposals (the engine already filtered bad deals). Present the top 3 with payback in plain words ('pays for itself in about 2 months'; when there is no upfront cost say 'immediately', never '0 months'); mention that more exist. When the user wants one, call approve_proposal — purchases then go through the consent screen (the 'Let the agent buy it' button on the dashboard); you never handle payments yourself." + style,
 		Tools:       []tool.Tool{propose, approve},
 	})
 	if err != nil {
