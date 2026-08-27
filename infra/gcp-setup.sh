@@ -14,7 +14,7 @@ REGION="${REGION:-us-central1}"
 AR_REPO="${AR_REPO:-automate-me}"
 RUN_SA_NAME="${RUN_SA_NAME:-automate-me-run}"
 SECRET_NAME="${SECRET_NAME:-google-api-key}"
-BUDGET_USD="${BUDGET_USD:-100}"
+BUDGET="${BUDGET:-500BRL}"                          # must match the billing account currency
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 # retry <n> <cmd...> — newly created service accounts take a few seconds to
@@ -127,13 +127,13 @@ retry 8 gcloud secrets add-iam-policy-binding "$SECRET_NAME" --project="$PROJECT
 # Budget calls bill their API quota to the gcloud *default* project, where the
 # API may be disabled and gcloud would prompt; pin the quota project and never
 # prompt. Non-fatal either way.
-log "budget alert (USD $BUDGET_USD)"
+log "budget alert ($BUDGET)"
 if CLOUDSDK_CORE_PROJECT="$PROJECT_ID" gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" \
      --format='value(displayName)' --quiet 2>/dev/null | grep -qx "automate-me-hack"; then
   echo "exists"
 else
   CLOUDSDK_CORE_PROJECT="$PROJECT_ID" gcloud billing budgets create --billing-account="$BILLING_ACCOUNT" \
-    --display-name="automate-me-hack" --budget-amount="${BUDGET_USD}USD" \
+    --display-name="automate-me-hack" --budget-amount="$BUDGET" \
     --filter-projects="projects/$PROJECT_NUMBER" \
     --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 \
     --quiet >/dev/null 2>&1 \
