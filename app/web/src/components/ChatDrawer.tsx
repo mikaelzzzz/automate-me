@@ -1,9 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
+import Markdown from 'react-markdown'
 import { ChatSession, type PendingConfirmation } from '../lib/chat'
 
 interface Msg {
   who: 'you' | 'agent'
   text: string
+}
+
+// Human wording for a tool the agent wants to run.
+function describe(p: PendingConfirmation): string {
+  const o = p.original
+  if (!o) return p.hint
+  const args = o.args ?? {}
+  if (o.name === 'approve_proposal') {
+    const id = String(args['proposal_id'] ?? '')
+    const recipe = id.split('-').slice(-1)[0] || id
+    return `Approve the "${recipe.replace(/-/g, ' ')}" proposal — purchase still needs your consent screen.`
+  }
+  const summary = Object.entries(args)
+    .map(([k, v]) => `${k}: ${String(v)}`)
+    .join(', ')
+  return `${o.name.replace(/_/g, ' ')}${summary ? ` (${summary})` : ''}`
 }
 
 const QUICK = [
@@ -45,7 +62,7 @@ export function ChatDrawer({ onDataChanged }: { onDataChanged: () => void }) {
     setBusy(true)
     try {
       const turn = await sess.current.send(text)
-      deliver(turn.text || '…', turn.confirmation)
+      deliver(turn.text || (turn.confirmation ? '' : '…'), turn.confirmation)
     } catch {
       setMsgs((m) => [...m, { who: 'agent', text: 'Chat is offline — is GOOGLE_API_KEY set on the server?' }])
     } finally {
@@ -108,18 +125,16 @@ export function ChatDrawer({ onDataChanged }: { onDataChanged: () => void }) {
                 className={
                   m.who === 'you'
                     ? 'ml-8 bg-sun-soft/60 rounded-2xl rounded-br-md px-3 py-2 text-sm'
-                    : 'mr-8 bg-surface-raised border-subtle rounded-2xl rounded-bl-md px-3 py-2 text-sm whitespace-pre-wrap'
+                    : 'mr-8 bg-surface-raised border-subtle rounded-2xl rounded-bl-md px-3 py-2 text-sm chat-md'
                 }
               >
-                {m.text}
+                {m.who === 'agent' ? <Markdown>{m.text}</Markdown> : m.text}
               </div>
             ))}
             {pending && (
               <div className="mr-4 bg-sun-soft/50 border border-sun-deep/40 rounded-2xl px-3 py-2.5 text-sm">
                 <div className="font-medium mb-1">Agent asks your approval</div>
-                <div className="text-xs text-ink-secondary mb-2">
-                  {pending.original ? `${pending.original.name}` : pending.hint}
-                </div>
+                <div className="text-xs text-ink-secondary mb-2">{describe(pending)}</div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => answer(true)}

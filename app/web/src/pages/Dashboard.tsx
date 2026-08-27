@@ -16,6 +16,13 @@ const RECIPE_TITLES: Record<string, string> = {
   'teams-report': 'Team automation report',
   'robot-vacuum': 'Robot vacuum',
   'grocery-delivery': 'Grocery delivery subscription',
+  'laundry-service': 'Wash-and-fold service',
+  'auto-pay': 'Auto-pay migration',
+  'farmacia-popular': 'Farmácia Popular check',
+  'sne-discount': 'SNE 40% fine discount',
+  'car-worth-it': 'Is your car worth it?',
+  'virtual-assistant': 'Delegate to a virtual assistant',
+  'forgotten-money': 'Forgotten money ritual',
 }
 
 export function Dashboard({

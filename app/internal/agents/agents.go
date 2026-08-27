@@ -25,8 +25,26 @@ type Deps struct {
 	UserID func(agent.Context) string
 }
 
+// brl formats integer centavos as "R$3,366.08" (en-US grouping, matching the
+// SPA). Money never touches floats.
 func brl(cents int64) string {
-	return fmt.Sprintf("R$%d.%02d", cents/100, cents%100)
+	neg := cents < 0
+	if neg {
+		cents = -cents
+	}
+	whole := fmt.Sprintf("%d", cents/100)
+	var b []byte
+	for i, c := range []byte(whole) {
+		if i > 0 && (len(whole)-i)%3 == 0 {
+			b = append(b, ',')
+		}
+		b = append(b, c)
+	}
+	sign := ""
+	if neg {
+		sign = "-"
+	}
+	return fmt.Sprintf("%sR$%s.%02d", sign, b, cents%100)
 }
 
 func (d Deps) userRate(ctx agent.Context) (store.User, error) {
@@ -36,6 +54,7 @@ func (d Deps) userRate(ctx agent.Context) (store.User, error) {
 // --- tools -----------------------------------------------------------------
 
 type addTaskIn struct {
+	TaskID        string  `json:"task_id,omitempty" jsonschema:"Existing task_id from get_life_pnl to update instead of creating a duplicate; empty to create"`
 	Name          string  `json:"name" jsonschema:"Short task name, e.g. 'Washing dishes after dinner'"`
 	Minutes       int     `json:"minutes_per_occurrence" jsonschema:"Estimated minutes per occurrence, confirmed with the user"`
 	TimesPerMonth float64 `json:"times_per_month" jsonschema:"Occurrences per month (daily=30, weekly=4.33)"`
@@ -43,6 +62,7 @@ type addTaskIn struct {
 }
 type addTaskOut struct {
 	TaskID              string `json:"task_id"`
+	Updated             bool   `json:"updated_existing"`
 	CostOfInactionMonth string `json:"cost_of_inaction_per_month"`
 	Note                string `json:"note"`
 }
@@ -50,7 +70,7 @@ type addTaskOut struct {
 func (d Deps) addTask() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "add_routine_task",
-		Description: "Persist a routine task the user confirmed (name, minutes, frequency). Returns the monthly Cost of Inaction computed by the deterministic Value Engine.",
+		Description: "Persist a routine task the user confirmed (name, minutes, frequency). Upserts: pass task_id (from get_life_pnl) to update an existing task; a task with the same name is updated, never duplicated. Returns the monthly Cost of Inaction computed by the deterministic Value Engine.",
 	}, func(ctx agent.Context, in addTaskIn) (addTaskOut, error) {
 		if in.Name == "" || in.Minutes <= 0 || in.TimesPerMonth <= 0 {
 			return addTaskOut{}, fmt.Errorf("name, positive minutes and times_per_month are required")
@@ -59,22 +79,29 @@ func (d Deps) addTask() (tool.Tool, error) {
 		if err != nil {
 			return addTaskOut{}, err
 		}
-		t := store.Task{
-			ID:         fmt.Sprintf("t-%x", len(in.Name)+in.Minutes) + "-" + sanitize(in.Name),
-			Name:       in.Name,
-			EstMinutes: in.Minutes,
-			FreqPerMon: in.TimesPerMonth,
-			Source:     defaultStr(in.Source, "interview"),
-			Confirmed:  true,
+		existing, err := d.Store.ListTasks(ctx, u.ID)
+		if err != nil {
+			return addTaskOut{}, err
 		}
+		t, updated := upsertTarget(existing, in.TaskID, in.Name)
+		t.Name = in.Name
+		t.EstMinutes = in.Minutes
+		t.FreqPerMon = in.TimesPerMonth
+		t.Source = defaultStr(in.Source, defaultStr(t.Source, "interview"))
+		t.Confirmed = true
 		if err := d.Store.PutTask(ctx, u.ID, t); err != nil {
 			return addTaskOut{}, err
 		}
 		cost := engine.CostOfInactionCents(engine.Task{Name: t.Name, EstMinutes: t.EstMinutes, FreqPerMonth: t.FreqPerMon}, u.HourlyRateCents)
+		note := "Created. Value computed deterministically; never estimate money yourself."
+		if updated {
+			note = "Updated the existing task instead of duplicating it. Value computed deterministically; never estimate money yourself."
+		}
 		return addTaskOut{
 			TaskID:              t.ID,
+			Updated:             updated,
 			CostOfInactionMonth: brl(cost),
-			Note:                "Value computed deterministically; never estimate money yourself.",
+			Note:                note,
 		}, nil
 	})
 }
@@ -193,7 +220,7 @@ func (d Deps) proposeAutomations() (tool.Tool, error) {
 				out.Proposals = append(out.Proposals, proposalRow{
 					ProposalID: p.ID, Recipe: r.Title, Class: string(r.Class),
 					MonthlySavings: brl(ev.MonthlySavingsCents), NetMonthly: brl(ev.NetMonthlyCents),
-					PaybackMonths: fmt.Sprintf("%.1f", ev.PaybackMonths),
+					PaybackMonths: paybackText(ev.PaybackMonths),
 					Executable:    r.Class == catalog.ClassExecutable,
 				})
 			}
@@ -236,6 +263,9 @@ func (d Deps) approveProposal() (tool.Tool, error) {
 
 // --- graph -----------------------------------------------------------------
 
+// style is appended to every instruction: replies land in a 380px chat panel.
+const style = " Formatting: plain conversational text for a narrow chat panel. Short paragraphs; '-' bullets when listing; **bold** only the key number. No markdown tables, no headings, no LaTeX, no emoji. Stay under 120 words unless the user asks for detail."
+
 // New builds the root orchestrator (must be ModeChat — runner requirement).
 func New(llm model.LLM, d Deps) (agent.Agent, error) {
 	addTask, err := d.addTask()
@@ -259,7 +289,7 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 		Name:        "routine_analyst",
 		Description: "Interviews the user about their routine, estimates task durations from benchmarks, confirms numbers, and maintains the Life P&L.",
 		Model:       llm,
-		Instruction: "You capture the user's routine. For each task: estimate duration from general benchmarks (hand-washing dishes 40-60 min/day, supermarket run 60-90 min/week), ASK the user to confirm or adjust, then call add_routine_task with confirmed numbers. Never invent money figures — the tools return them. Use get_life_pnl to show the picture. Speak the user's language; keep money in BRL.",
+		Instruction: "You capture the user's routine. First call get_life_pnl to see what is already tracked. For each task the user describes: if it is the same activity as an existing task (even worded differently, e.g. 'washing dishes' vs 'washing dishes after dinner'), update that task by passing its task_id to add_routine_task instead of creating a duplicate; ask when unsure. Estimate duration from general benchmarks (hand-washing dishes 40-60 min/day, supermarket run 60-90 min/week), ASK the user to confirm or adjust, then call add_routine_task with confirmed numbers. Never invent money figures — the tools return them. Use get_life_pnl to show the picture. Speak the user's language; keep money in BRL." + style,
 		Tools:       []tool.Tool{addTask, pnl},
 	})
 	if err != nil {
@@ -270,7 +300,7 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 		Name:        "automation_advisor",
 		Description: "Matches routine tasks to automation recipes, presents payback rankings, and records user approvals.",
 		Model:       llm,
-		Instruction: "You recommend automations. Call propose_automations to compute ranked proposals (the engine already filtered bad deals). Present top options with payback in plain words ('pays for itself in about 2 months'). When the user wants one, call approve_proposal — purchases then go through the consent screen; you never handle payments yourself.",
+		Instruction: "You recommend automations. Call propose_automations to compute ranked proposals (the engine already filtered bad deals). Present the top 3 with payback in plain words ('pays for itself in about 2 months'); mention that more exist. When the user wants one, call approve_proposal — purchases then go through the consent screen (the 'Let the agent buy it' button on the dashboard); you never handle payments yourself." + style,
 		Tools:       []tool.Tool{propose, approve},
 	})
 	if err != nil {
@@ -281,7 +311,7 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 		Name:        "automate_me",
 		Description: "Automate.me orchestrator: finds where the user's life leaks time, prices it, and coordinates automation.",
 		Model:       llm,
-		Instruction: "You are Automate.me. Goal: find where the user leaks time, price it in BRL, and automate the worst leaks. Delegate routine capture to routine_analyst and recommendations to automation_advisor. Be concise and concrete; lead with numbers the tools return. Everything monetary comes from tools, never from you.",
+		Instruction: "You are Automate.me. Goal: find where the user leaks time, price it in BRL, and automate the worst leaks. Delegate routine capture to routine_analyst and recommendations to automation_advisor. Be concise and concrete; lead with numbers the tools return. Everything monetary comes from tools, never from you." + style,
 		SubAgents:   []agent.Agent{analyst, advisor},
 	})
 }
@@ -302,6 +332,45 @@ func sanitize(s string) string {
 		}
 	}
 	return string(out)
+}
+
+// upsertTarget picks the task to write: an explicit task_id wins, then a task
+// whose normalised name matches, else a fresh task with a name-derived id.
+func upsertTarget(existing []store.Task, taskID, name string) (store.Task, bool) {
+	norm := sanitize(name)
+	for _, t := range existing {
+		if taskID != "" && t.ID == taskID {
+			return t, true
+		}
+	}
+	for _, t := range existing {
+		if sanitize(t.Name) == norm {
+			return t, true
+		}
+	}
+	id := "t-" + norm
+	for n := 2; ; n++ {
+		clash := false
+		for _, t := range existing {
+			if t.ID == id {
+				clash = true
+				break
+			}
+		}
+		if !clash {
+			return store.Task{ID: id}, false
+		}
+		id = fmt.Sprintf("t-%s-%d", norm, n)
+	}
+}
+
+// paybackText phrases payback for the LLM so free recipes read as
+// "immediate" rather than "0 months".
+func paybackText(months float64) string {
+	if months <= 0 {
+		return "immediate (no upfront cost)"
+	}
+	return fmt.Sprintf("%.1f months", months)
 }
 
 func defaultStr(s, d string) string {

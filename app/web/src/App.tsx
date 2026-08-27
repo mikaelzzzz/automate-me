@@ -46,8 +46,9 @@ export default function App() {
             </button>
           ))}
         </div>
-        <span className="ml-auto text-xs text-ink-tertiary rounded-pill bg-white/55 hairline px-3 py-1.5">
-          demo mode · simulated payments
+        <span className="ml-auto text-xs text-ink-tertiary rounded-pill bg-white/55 hairline px-3 py-1.5 whitespace-nowrap">
+          <span className="sm:hidden">demo</span>
+          <span className="hidden sm:inline">demo mode · simulated payments</span>
         </span>
       </nav>
 
