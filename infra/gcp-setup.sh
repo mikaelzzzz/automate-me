@@ -7,7 +7,7 @@
 set -euo pipefail
 
 PROJECT_ID="${GCP_PROJECT:-automate-me-hack}"
-PROJECT_NAME="${GCP_PROJECT_NAME:-Automate.me Hackathon}"
+PROJECT_NAME="${GCP_PROJECT_NAME:-Automate-me Hackathon}"
 ORG_ID="${ORG_ID:-995455311519}"                      # flowmika.com
 BILLING_ACCOUNT="${BILLING_ACCOUNT:-01AB35-4D0433-156DEF}"
 REGION="${REGION:-us-central1}"
@@ -17,6 +17,17 @@ SECRET_NAME="${SECRET_NAME:-google-api-key}"
 BUDGET_USD="${BUDGET_USD:-100}"
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
+# retry <n> <cmd...> — newly created service accounts take a few seconds to
+# become visible to IAM; bindings fail with "does not exist" until then.
+retry() {
+  local n=$1; shift
+  local i
+  for ((i = 1; i <= n; i++)); do
+    "$@" && return 0
+    [[ $i -lt $n ]] && { echo "  retry $i/$n in 5s…"; sleep 5; }
+  done
+  return 1
+}
 
 if [[ "$PROJECT_ID" == "ecosistema-karol-prod" ]]; then
   echo "refusing to touch ecosistema-karol-prod (production of another product)" >&2
@@ -39,7 +50,12 @@ fi
 PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
 
 log "billing → $BILLING_ACCOUNT"
-gcloud billing projects link "$PROJECT_ID" --billing-account="$BILLING_ACCOUNT" >/dev/null
+CURRENT_BILLING="$(gcloud billing projects describe "$PROJECT_ID" --format='value(billingAccountName)' 2>/dev/null || true)"
+if [[ "$CURRENT_BILLING" == "billingAccounts/$BILLING_ACCOUNT" ]]; then
+  echo "already linked"
+else
+  gcloud billing projects link "$PROJECT_ID" --billing-account="$BILLING_ACCOUNT" >/dev/null
+fi
 
 # ------------------------------------------------------------------- APIs ---
 log "APIs"
@@ -69,7 +85,7 @@ gcloud iam service-accounts describe "$RUN_SA" --project="$PROJECT_ID" >/dev/nul
   || gcloud iam service-accounts create "$RUN_SA_NAME" --project="$PROJECT_ID" \
        --display-name="Automate.me Cloud Run runtime"
 for role in roles/logging.logWriter roles/cloudtrace.agent roles/aiplatform.user; do
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  retry 8 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$RUN_SA" --role="$role" --condition=None --quiet >/dev/null
 done
 
@@ -79,7 +95,7 @@ done
 BUILD_SA="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
 log "Cloud Build identity $BUILD_SA"
 for role in roles/cloudbuild.builds.builder roles/artifactregistry.writer roles/logging.logWriter roles/storage.objectAdmin; do
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  retry 8 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$BUILD_SA" --role="$role" --condition=None --quiet >/dev/null
 done
 
@@ -93,25 +109,35 @@ fi
 gcloud secrets describe "$SECRET_NAME" --project="$PROJECT_ID" >/dev/null 2>&1 \
   || gcloud secrets create "$SECRET_NAME" --project="$PROJECT_ID" --replication-policy=automatic
 if [[ -n "${GOOGLE_API_KEY:-}" ]]; then
-  printf '%s' "$GOOGLE_API_KEY" | gcloud secrets versions add "$SECRET_NAME" --project="$PROJECT_ID" --data-file=- >/dev/null
-  echo "new version added"
+  LATEST="$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$PROJECT_ID" 2>/dev/null || true)"
+  if [[ "$LATEST" == "$GOOGLE_API_KEY" ]]; then
+    echo "latest version already holds this key"
+  else
+    printf '%s' "$GOOGLE_API_KEY" | gcloud secrets versions add "$SECRET_NAME" --project="$PROJECT_ID" --data-file=- >/dev/null
+    echo "new version added"
+  fi
 else
   echo "no GOOGLE_API_KEY in env or app/.env — add one later with:"
   echo "  printf '%s' \"\$KEY\" | gcloud secrets versions add $SECRET_NAME --project=$PROJECT_ID --data-file=-"
 fi
-gcloud secrets add-iam-policy-binding "$SECRET_NAME" --project="$PROJECT_ID" \
+retry 8 gcloud secrets add-iam-policy-binding "$SECRET_NAME" --project="$PROJECT_ID" \
   --member="serviceAccount:$RUN_SA" --role=roles/secretmanager.secretAccessor --quiet >/dev/null
 
 # ------------------------------------------------------------- budget alert ---
+# Budget calls bill their API quota to the gcloud *default* project, where the
+# API may be disabled and gcloud would prompt; pin the quota project and never
+# prompt. Non-fatal either way.
 log "budget alert (USD $BUDGET_USD)"
-if gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" --format='value(displayName)' 2>/dev/null \
-   | grep -qx "automate-me-hack"; then
+if CLOUDSDK_CORE_PROJECT="$PROJECT_ID" gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" \
+     --format='value(displayName)' --quiet 2>/dev/null | grep -qx "automate-me-hack"; then
   echo "exists"
 else
-  gcloud billing budgets create --billing-account="$BILLING_ACCOUNT" --display-name="automate-me-hack" \
-    --budget-amount="${BUDGET_USD}USD" --filter-projects="projects/$PROJECT_NUMBER" \
-    --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 >/dev/null \
-    || echo "budget creation failed (non-fatal); create one in the console"
+  CLOUDSDK_CORE_PROJECT="$PROJECT_ID" gcloud billing budgets create --billing-account="$BILLING_ACCOUNT" \
+    --display-name="automate-me-hack" --budget-amount="${BUDGET_USD}USD" \
+    --filter-projects="projects/$PROJECT_NUMBER" \
+    --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 \
+    --quiet >/dev/null 2>&1 \
+    || echo "budget creation failed (non-fatal); create one in the console: Billing → Budgets & alerts"
 fi
 
 # Firestore (pendência 7 — session.Service). Uncomment once code uses it:
