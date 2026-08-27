@@ -69,7 +69,11 @@ if [[ -z "$ONLY" || "$ONLY" == app ]]; then
     --set-secrets="GOOGLE_API_KEY=$SECRET_NAME:latest" \
     --labels="app=automate-me,service=app" --quiet \
   || { echo "if this failed on allUsers: org policy iam.allowedPolicyMemberDomains blocks public services;" >&2
-       echo "ask the org admin to exempt project $PROJECT_ID or set the policy to allow all." >&2; exit 1; }
+       echo "run infra/gcp-setup.sh (sets a project-level override) and redeploy." >&2; exit 1; }
+  # `gcloud run deploy --allow-unauthenticated` only warns when the allUsers
+  # binding is rejected; make the public binding explicit and fatal.
+  gcloud run services add-iam-policy-binding automate-me --project="$PROJECT_ID" --region="$REGION" \
+    --member=allUsers --role=roles/run.invoker --quiet >/dev/null
 fi
 
 log "smoke"

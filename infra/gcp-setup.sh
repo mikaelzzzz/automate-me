@@ -72,6 +72,25 @@ gcloud services enable --project="$PROJECT_ID" \
   aiplatform.googleapis.com \
   billingbudgets.googleapis.com
 
+# ------------------------------------------------------ public access ---
+# The flowmika.com org enforces Domain Restricted Sharing
+# (iam.allowedPolicyMemberDomains), which rejects allUsers on Cloud Run.
+# Override it for THIS project only so the demo dashboard can be public.
+# Needs roles/orgpolicy.policyAdmin on the org. Reversible:
+#   gcloud org-policies delete iam.allowedPolicyMemberDomains --project=$PROJECT_ID
+log "org policy: allow public members on $PROJECT_ID only"
+gcloud services enable orgpolicy.googleapis.com --project="$PROJECT_ID" >/dev/null
+POLICY_FILE="$(mktemp)"
+cat >"$POLICY_FILE" <<POLICY
+name: projects/$PROJECT_ID/policies/iam.allowedPolicyMemberDomains
+spec:
+  rules:
+    - allowAll: true
+POLICY
+gcloud org-policies set-policy "$POLICY_FILE" --project="$PROJECT_ID" >/dev/null \
+  || echo "could not set project-level org policy (need orgpolicy.policyAdmin); public deploy will fail on allUsers"
+rm -f "$POLICY_FILE"
+
 # ------------------------------------------------------- Artifact Registry ---
 log "Artifact Registry $AR_REPO ($REGION)"
 gcloud artifacts repositories describe "$AR_REPO" --project="$PROJECT_ID" --location="$REGION" >/dev/null 2>&1 \
