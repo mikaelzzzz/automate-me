@@ -1,4 +1,4 @@
-.PHONY: test lint fmt run-app run-merchant run-web build deploy-app deploy-merchant
+.PHONY: test lint fmt run-app run-merchant run-web build docker-build gcp-setup deploy deploy-app deploy-merchant
 
 test:
 	cd app && go test -race ./...
@@ -14,8 +14,9 @@ fmt:
 	cd app && go fix ./...
 	cd merchant && go fix ./...
 
+# Loads app/.env (GOOGLE_API_KEY etc.) if present. PORT/MERCHANT_URL from the environment win.
 run-app:
-	cd app && go run ./cmd/server
+	cd app && (set -a; [ -f .env ] && . ./.env; set +a; go run ./cmd/server)
 
 run-merchant:
 	cd merchant && go run ./cmd/server
@@ -28,9 +29,21 @@ build:
 	cd app && go build ./...
 	cd merchant && go build ./...
 
-# GCP_PROJECT and REGION must be set; see README spin-up.
+# Local validation of the Cloud Build images (context = repo root).
+docker-build:
+	docker build -f app/Dockerfile -t automate-me/app .
+	docker build -f merchant/Dockerfile -t automate-me/merchant .
+
+# One-time project bootstrap; GCP_PROJECT defaults to automate-me-hack (never ecosistema-karol-prod).
+gcp-setup:
+	./infra/gcp-setup.sh
+
+# Cloud Build both images, roll out merchant (private) then app (public). GCP_PROJECT required.
+deploy:
+	./infra/deploy.sh
+
 deploy-app:
-	gcloud run deploy automate-me --source app --project $(GCP_PROJECT) --region $(REGION) --allow-unauthenticated
+	ONLY=app ./infra/deploy.sh
 
 deploy-merchant:
-	gcloud run deploy merchant-agent --source merchant --project $(GCP_PROJECT) --region $(REGION) --no-allow-unauthenticated
+	ONLY=merchant ./infra/deploy.sh

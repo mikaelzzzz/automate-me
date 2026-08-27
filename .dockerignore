@@ -1,0 +1,16 @@
+# Build context is the repository root (see app/Dockerfile, merchant/Dockerfile).
+.git
+.github
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+!**/.env.example
+**/*.test
+**/coverage.out
+docs
+graphify-out
+tmp
+bin
+*.md
+infra

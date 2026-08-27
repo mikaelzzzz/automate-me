@@ -36,7 +36,15 @@ func main() {
 	}
 
 	merchantURL := cmp.Or(os.Getenv("MERCHANT_URL"), "http://localhost:8081")
-	surface := trusted.NewSurface(st, shopping.NewMerchantClient(merchantURL))
+	merchant := shopping.NewMerchantClient(merchantURL)
+	if os.Getenv("MERCHANT_AUTH") == "idtoken" {
+		// Cloud Run: the merchant is private; authenticate as this service.
+		var err error
+		if merchant, err = shopping.NewAuthenticatedMerchantClient(ctx, merchantURL); err != nil {
+			log.Fatalf("merchant client: %v", err)
+		}
+	}
+	surface := trusted.NewSurface(st, merchant)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })

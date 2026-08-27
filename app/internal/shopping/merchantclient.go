@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"time"
 
+	"google.golang.org/api/idtoken"
+
 	"automate-me/ap2core"
 )
 
@@ -22,8 +24,23 @@ type MerchantClient struct {
 	HTTP    *http.Client
 }
 
+// NewMerchantClient talks to the merchant without credentials (local dev).
 func NewMerchantClient(baseURL string) *MerchantClient {
 	return &MerchantClient{BaseURL: baseURL, HTTP: &http.Client{Timeout: 15 * time.Second}}
+}
+
+// NewAuthenticatedMerchantClient attaches a Google-signed ID token with the
+// merchant URL as audience, so the merchant Cloud Run service stays private:
+// only identities holding roles/run.invoker on it (this service's runtime SA)
+// can reach the AP2 rail. Needs a service-account credential source (Cloud Run
+// metadata server); user ADC is not supported by idtoken.
+func NewAuthenticatedMerchantClient(ctx context.Context, baseURL string) (*MerchantClient, error) {
+	hc, err := idtoken.NewClient(ctx, baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("merchant id-token client: %w", err)
+	}
+	hc.Timeout = 15 * time.Second
+	return &MerchantClient{BaseURL: baseURL, HTTP: hc}, nil
 }
 
 type CreateCheckoutResult struct {

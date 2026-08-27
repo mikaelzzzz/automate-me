@@ -1,0 +1,40 @@
+# Builds both service images from the repository root and pushes them to
+# Artifact Registry. Invoked by infra/deploy.sh:
+#   gcloud builds submit --config infra/cloudbuild.yaml \
+#     --substitutions=_REPO=<region>-docker.pkg.dev/<project>/automate-me,_TAG=<git-sha> .
+substitutions:
+  _REPO: ''
+  _TAG: dev
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+steps:
+  - id: build-app
+    name: gcr.io/cloud-builders/docker
+    waitFor: ['-']
+    args:
+      - build
+      - -f
+      - app/Dockerfile
+      - -t
+      - ${_REPO}/app:${_TAG}
+      - -t
+      - ${_REPO}/app:latest
+      - .
+  - id: build-merchant
+    name: gcr.io/cloud-builders/docker
+    waitFor: ['-']
+    args:
+      - build
+      - -f
+      - merchant/Dockerfile
+      - -t
+      - ${_REPO}/merchant:${_TAG}
+      - -t
+      - ${_REPO}/merchant:latest
+      - .
+images:
+  - ${_REPO}/app:${_TAG}
+  - ${_REPO}/app:latest
+  - ${_REPO}/merchant:${_TAG}
+  - ${_REPO}/merchant:latest

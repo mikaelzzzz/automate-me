@@ -1,0 +1,13 @@
+# Source upload for `gcloud builds submit` (keeps the tarball small).
+.git
+.github
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+!**/.env.example
+docs
+graphify-out
+tmp
+bin
+*.md
