@@ -13,6 +13,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 
+	"automate-me/app/internal/briefing"
 	"automate-me/app/internal/catalog"
 	"automate-me/app/internal/engine"
 	"automate-me/app/internal/store"
@@ -24,6 +25,9 @@ type Deps struct {
 	// UserID resolves the acting user. Demo scope: fixed demo user; multi-user
 	// auth swaps this for a session-state lookup.
 	UserID func(agent.Context) string
+	// Briefing is nil without MAPS_API_KEY; the day planner then says so.
+	Briefing *briefing.Builder
+	Blocks   briefing.BlockWriter
 }
 
 // brl formats integer centavos as "R$3,366.08" (en-US grouping, matching the
@@ -287,6 +291,142 @@ func (d Deps) approveProposal() (tool.Tool, error) {
 	})
 }
 
+// --- day planner tools -------------------------------------------------------
+
+type briefingRow struct {
+	CardID      string `json:"card_id"`
+	Event       string `json:"event"`
+	EventAt     string `json:"event_at"`
+	LeaveAt     string `json:"leave_at"`
+	Route       string `json:"route"`
+	TrafficMin  int    `json:"traffic_minutes"`
+	TrafficCost string `json:"traffic_cost"`
+	Weather     string `json:"weather"`
+	Clothing    string `json:"clothing"`
+	FloodRisk   string `json:"flood_risk"`
+	FloodDetail string `json:"flood_detail"`
+	Alert       string `json:"alert,omitempty"`
+	Alternative string `json:"alternative,omitempty"`
+	Calendar    string `json:"calendar_block"`
+}
+type briefingOut struct {
+	Day   string        `json:"day"`
+	Cards []briefingRow `json:"cards"`
+	Note  string        `json:"note"`
+}
+
+func (d Deps) rows(cards []store.BriefingCard) []briefingRow {
+	out := make([]briefingRow, 0, len(cards))
+	for _, c := range cards {
+		loc := c.EventStart.Location()
+		row := briefingRow{
+			CardID: c.ID, Event: c.EventSummary,
+			EventAt: c.EventStart.In(loc).Format("15:04"), LeaveAt: c.DepartureTime.In(loc).Format("15:04"),
+			Route: c.RouteSummary, TrafficMin: c.TrafficMinutes, TrafficCost: brl(c.TrafficCents),
+			Weather: c.Weather, Clothing: c.Clothing, FloodRisk: c.FloodRisk, FloodDetail: c.FloodDetail,
+			Alert: c.AlertHeadline, Alternative: c.AlternativeNote, Calendar: "not written",
+		}
+		if c.CalendarBlockID != "" {
+			row.Calendar = "written (" + c.CalendarBlockMode + ")"
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+func (d Deps) planMyDay() (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "plan_my_day",
+		Description: "Build today's Daily Briefing: one route worker per appointment (Routes API with future departure time), traffic priced at the user's hourly rate, hourly weather at departure, flood risk from live alerts and GeoSampa history. Returns the cards; call get_daily_briefing if it was already built.",
+	}, func(ctx agent.Context, _ struct{}) (briefingOut, error) {
+		if d.Briefing == nil {
+			return briefingOut{Note: "Maps Platform is not configured on this server (MAPS_API_KEY); tell the user the briefing is unavailable."}, nil
+		}
+		u, err := d.userRate(ctx)
+		if err != nil {
+			return briefingOut{}, err
+		}
+		day := d.Briefing.DayFor(d.Briefing.Now())
+		cards := d.Briefing.Build(ctx, u.ID, u.HourlyRateCents, briefing.DemoAppointments(day, d.Briefing.Loc))
+		for _, c := range cards {
+			if err := d.Store.PutBriefingCard(ctx, c); err != nil {
+				return briefingOut{}, err
+			}
+		}
+		return briefingOut{Day: d.Briefing.DayKey(day), Cards: d.rows(cards), Note: "Numbers are measured (Routes/Weather/GeoSampa), not estimated. Offer to write the departure blocks to the calendar."}, nil
+	})
+}
+
+func (d Deps) getBriefing() (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "get_daily_briefing",
+		Description: "Read the Daily Briefing already built for the day being planned (today before 08:00, else tomorrow).",
+	}, func(ctx agent.Context, _ struct{}) (briefingOut, error) {
+		if d.Briefing == nil {
+			return briefingOut{Note: "Maps Platform is not configured on this server."}, nil
+		}
+		day := d.Briefing.DayFor(d.Briefing.Now())
+		cards, err := d.Store.ListBriefing(ctx, d.UserID(ctx), d.Briefing.DayKey(day))
+		if err != nil {
+			return briefingOut{}, err
+		}
+		if len(cards) == 0 {
+			return briefingOut{Day: d.Briefing.DayKey(day), Note: "Nothing built yet — call plan_my_day."}, nil
+		}
+		return briefingOut{Day: d.Briefing.DayKey(day), Cards: d.rows(cards)}, nil
+	})
+}
+
+type blocksIn struct {
+	CardIDs []string `json:"card_ids" jsonschema:"card_id values from the briefing to write 'Leave at' blocks for; empty means all"`
+}
+type blocksOut struct {
+	Written []string `json:"written"`
+	Mode    string   `json:"mode"`
+	Note    string   `json:"note"`
+}
+
+func (d Deps) writeBlocks() (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:                "write_departure_blocks",
+		Description:         "Write 'Leave at HH:MM → event' blocks to the user's calendar for the briefed appointments. Requires the user's confirmation.",
+		RequireConfirmation: true,
+	}, func(ctx agent.Context, in blocksIn) (blocksOut, error) {
+		if d.Briefing == nil || d.Blocks == nil {
+			return blocksOut{Note: "Calendar writing is not configured."}, nil
+		}
+		day := d.Briefing.DayKey(d.Briefing.DayFor(d.Briefing.Now()))
+		cards, err := d.Store.ListBriefing(ctx, d.UserID(ctx), day)
+		if err != nil {
+			return blocksOut{}, err
+		}
+		want := map[string]bool{}
+		for _, id := range in.CardIDs {
+			want[id] = true
+		}
+		out := blocksOut{}
+		for _, c := range cards {
+			if len(want) > 0 && !want[c.ID] {
+				continue
+			}
+			id, mode, err := d.Blocks.WriteDepartureBlock(ctx, c)
+			if err != nil {
+				return blocksOut{}, err
+			}
+			c.CalendarBlockID, c.CalendarBlockMode = id, mode
+			if err := d.Store.PutBriefingCard(ctx, c); err != nil {
+				return blocksOut{}, err
+			}
+			out.Written = append(out.Written, c.EventSummary+" · leave "+c.DepartureTime.In(c.EventStart.Location()).Format("15:04"))
+			out.Mode = mode
+		}
+		if out.Mode == "simulated" {
+			out.Note = "No Google Calendar connected on this server: blocks recorded in-app and labelled simulated."
+		}
+		return out, nil
+	})
+}
+
 // --- graph -----------------------------------------------------------------
 
 // style is appended to every instruction: replies land in a 380px chat panel.
@@ -310,12 +450,24 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	plan, err := d.planMyDay()
+	if err != nil {
+		return nil, err
+	}
+	getBrief, err := d.getBriefing()
+	if err != nil {
+		return nil, err
+	}
+	blocks, err := d.writeBlocks()
+	if err != nil {
+		return nil, err
+	}
 
 	analyst, err := llmagent.New(llmagent.Config{
 		Name:        "routine_analyst",
 		Description: "Interviews the user about their routine, estimates task durations from benchmarks, confirms numbers, and maintains the Life P&L.",
 		Model:       llm,
-		Instruction: "You capture the user's routine. First call get_life_pnl to see what is already tracked. For each task the user describes: if it is the same activity as an existing task (even worded differently, e.g. 'washing dishes' vs 'washing dishes after dinner'), update that task by passing its task_id to add_routine_task instead of creating a duplicate; ask when unsure. Estimate duration from general benchmarks (hand-washing dishes 40-60 min/day, supermarket run 60-90 min/week), ASK the user to confirm or adjust, then call add_routine_task with confirmed numbers. Never invent money figures — the tools return them. Use get_life_pnl to show the picture. Speak the user's language; keep money in BRL." + style,
+		Instruction: "You capture the user's routine. Photos: when the user sends an image (handwritten to-do list, paper calendar, pile of boletos, school note, whiteboard), read every item on it, turn each into a routine task with your best estimate of minutes and times per month, list them in one short message for confirmation, and after the user confirms save each with add_routine_task (source: photo). First call get_life_pnl to see what is already tracked. For each task the user describes: if it is the same activity as an existing task (even worded differently, e.g. 'washing dishes' vs 'washing dishes after dinner'), update that task by passing its task_id to add_routine_task instead of creating a duplicate; ask when unsure. Estimate duration from general benchmarks (hand-washing dishes 40-60 min/day, supermarket run 60-90 min/week), ASK the user to confirm or adjust, then call add_routine_task with confirmed numbers. Never invent money figures — the tools return them. Use get_life_pnl to show the picture. Speak the user's language; keep money in BRL." + style,
 		Tools:       []tool.Tool{addTask, pnl},
 	})
 	if err != nil {
@@ -333,12 +485,23 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 		return nil, err
 	}
 
+	planner, err := llmagent.New(llmagent.Config{
+		Name:        "day_planner",
+		Description: "Builds and narrates the Daily Briefing: when to leave for each appointment, what traffic costs, weather and what to wear, flood risk on the route, and writes departure blocks to the calendar.",
+		Model:       llm,
+		Instruction: "You plan the user's day. Call get_daily_briefing first; if nothing is built, call plan_my_day. Brief each appointment in one line: leave-at time, route minutes, traffic cost in BRL, weather and what to wear, flood risk (say plainly when a route crosses points with flooding history). Lead with the biggest risk of the day. Every number comes from the tool. Then offer to write the departure blocks to the calendar; on yes, call write_departure_blocks." + style,
+		Tools:       []tool.Tool{getBrief, plan, blocks},
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return llmagent.New(llmagent.Config{
 		Name:        "automate_me",
 		Description: "Automate.me orchestrator: finds where the user's life leaks time, prices it, and coordinates automation.",
 		Model:       llm,
-		Instruction: "You are Automate.me. Goal: find where the user leaks time, price it in BRL, and automate the worst leaks. Delegate routine capture to routine_analyst and recommendations to automation_advisor. Be concise and concrete; lead with numbers the tools return. Everything monetary comes from tools, never from you." + style,
-		SubAgents:   []agent.Agent{analyst, advisor},
+		Instruction: "You are Automate.me. Goal: find where the user leaks time, price it in BRL, and automate the worst leaks. Delegate routine capture (text or photos of lists, calendars, boletos, notes) to routine_analyst, recommendations to automation_advisor, and anything about today's/tomorrow's schedule, commute, departure times, traffic, weather or floods to day_planner. Be concise and concrete; lead with numbers the tools return. Everything monetary comes from tools, never from you." + style,
+		SubAgents:   []agent.Agent{analyst, advisor, planner},
 	})
 }
 

@@ -66,7 +66,7 @@ if [[ -z "$ONLY" || "$ONLY" == app ]]; then
     --min-instances="$MIN_INSTANCES" --max-instances=1 \
     --memory=512Mi --cpu=1 --timeout=300 \
     --set-env-vars="MERCHANT_URL=$MERCHANT_URL,MERCHANT_AUTH=idtoken,DEMO_MODE=seed,GEMINI_MODEL=$GEMINI_MODEL" \
-    --set-secrets="GOOGLE_API_KEY=$SECRET_NAME:latest" \
+    --set-secrets="GOOGLE_API_KEY=$SECRET_NAME:latest,MAPS_API_KEY=maps-api-key:latest" \
     --labels="app=automate-me,service=app" --quiet \
   || { echo "if this failed on allUsers: org policy iam.allowedPolicyMemberDomains blocks public services;" >&2
        echo "run infra/gcp-setup.sh (sets a project-level override) and redeploy." >&2; exit 1; }

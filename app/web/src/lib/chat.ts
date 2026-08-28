@@ -15,8 +15,17 @@ export interface FunctionResponse {
 }
 interface GenaiPart {
   text?: string
+  inlineData?: { mimeType: string; data: string }
   functionCall?: FunctionCall
   functionResponse?: FunctionResponse
+}
+
+/** A photo attached to a message: base64 payload, no data: prefix. */
+export interface Attachment {
+  mimeType: string
+  data: string
+  /** object URL for the thumbnail in the transcript */
+  previewUrl: string
 }
 interface GenaiContent {
   role: string
@@ -69,8 +78,11 @@ export class ChatSession {
     this.ready = true
   }
 
-  send(text: string, onEvent: OnEvent): Promise<void> {
-    return this.stream({ role: 'user', parts: [{ text }] }, onEvent)
+  send(text: string, onEvent: OnEvent, attachment?: Attachment): Promise<void> {
+    const parts: GenaiPart[] = []
+    if (attachment) parts.push({ inlineData: { mimeType: attachment.mimeType, data: attachment.data } })
+    parts.push({ text: text || 'Here is a photo of my routine. Read every item and price it.' })
+    return this.stream({ role: 'user', parts }, onEvent)
   }
 
   confirm(pending: PendingConfirmation, confirmed: boolean, onEvent: OnEvent): Promise<void> {
@@ -192,6 +204,7 @@ export const AGENTS: Record<string, { label: string; color: string; role: string
   automate_me: { label: 'Automate.me', color: '#242321', role: 'orchestrator' },
   routine_analyst: { label: 'Routine Analyst', color: '#a07c12', role: 'captures & prices your routine' },
   automation_advisor: { label: 'Automation Advisor', color: '#2c5fa8', role: 'ranks automations by payback' },
+  day_planner: { label: 'Day Planner', color: '#2e7d32', role: 'routes, traffic cost, weather, floods' },
 }
 
 export function agentMeta(author: string) {

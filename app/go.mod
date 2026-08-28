@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	automate-me/ap2core v0.0.0
+	golang.org/x/sync v0.22.0
 	google.golang.org/adk/v2 v2.2.0
 	google.golang.org/api v0.291.0
 	google.golang.org/genai v1.68.0

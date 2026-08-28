@@ -116,19 +116,33 @@ type ActionPlan struct {
 
 // BriefingCard is one appointment's daily briefing (design §4 briefings).
 type BriefingCard struct {
-	ID              string    `json:"id" firestore:"id"`
-	UserID          string    `json:"user_id" firestore:"user_id"`
-	Day             string    `json:"day" firestore:"day"` // YYYY-MM-DD
-	EventSummary    string    `json:"event_summary" firestore:"event_summary"`
-	EventStart      time.Time `json:"event_start" firestore:"event_start"`
-	DepartureTime   time.Time `json:"departure_time" firestore:"departure_time"`
-	RouteSummary    string    `json:"route_summary" firestore:"route_summary"`
-	TrafficCents    int64     `json:"traffic_cents" firestore:"traffic_cents"`
-	Weather         string    `json:"weather" firestore:"weather"`
-	Clothing        string    `json:"clothing" firestore:"clothing"`
-	FloodRisk       string    `json:"flood_risk" firestore:"flood_risk"` // none | historic | alert
-	FloodDetail     string    `json:"flood_detail" firestore:"flood_detail"`
-	AlternativeNote string    `json:"alternative_note" firestore:"alternative_note"`
+	ID            string    `json:"id" firestore:"id"`
+	UserID        string    `json:"user_id" firestore:"user_id"`
+	Day           string    `json:"day" firestore:"day"` // YYYY-MM-DD
+	EventSummary  string    `json:"event_summary" firestore:"event_summary"`
+	EventStart    time.Time `json:"event_start" firestore:"event_start"`
+	Origin        string    `json:"origin" firestore:"origin"`
+	Destination   string    `json:"destination" firestore:"destination"`
+	DepartureTime time.Time `json:"departure_time" firestore:"departure_time"`
+	RouteSummary  string    `json:"route_summary" firestore:"route_summary"`
+	RouteMinutes  int       `json:"route_minutes" firestore:"route_minutes"`
+	// TrafficMinutes = duration − staticDuration; TrafficCents prices it at
+	// the user's hourly rate (Value Engine input, measured not guessed).
+	TrafficMinutes  int      `json:"traffic_minutes" firestore:"traffic_minutes"`
+	TrafficCents    int64    `json:"traffic_cents" firestore:"traffic_cents"`
+	Weather         string   `json:"weather" firestore:"weather"`
+	WeatherTempC    float64  `json:"weather_temp_c" firestore:"weather_temp_c"`
+	RainChancePct   int      `json:"rain_chance_pct" firestore:"rain_chance_pct"`
+	Clothing        string   `json:"clothing" firestore:"clothing"`
+	FloodRisk       string   `json:"flood_risk" firestore:"flood_risk"` // none | historic | alert
+	FloodDetail     string   `json:"flood_detail" firestore:"flood_detail"`
+	FloodPoints     int      `json:"flood_points" firestore:"flood_points"`
+	AlertHeadline   string   `json:"alert_headline,omitempty" firestore:"alert_headline,omitempty"`
+	AlternativeNote string   `json:"alternative_note" firestore:"alternative_note"`
+	Notes           []string `json:"notes,omitempty" firestore:"notes,omitempty"`
+	// Calendar block written for this departure: "" | simulated | google.
+	CalendarBlockID   string `json:"calendar_block_id,omitempty" firestore:"calendar_block_id,omitempty"`
+	CalendarBlockMode string `json:"calendar_block_mode,omitempty" firestore:"calendar_block_mode,omitempty"`
 }
 
 // Store is the persistence boundary. Implementations must be safe for

@@ -3,6 +3,7 @@ import Markdown from 'react-markdown'
 import {
   ChatSession,
   agentMeta,
+  type Attachment,
   type FunctionCall,
   type PendingConfirmation,
   type StreamEvent,
@@ -30,13 +31,27 @@ interface ProposalRow {
   agent_can_execute: boolean
 }
 
+interface BriefingRow {
+  card_id: string
+  event: string
+  event_at: string
+  leave_at: string
+  route: string
+  traffic_minutes: number
+  traffic_cost: string
+  flood_risk: string
+  flood_detail: string
+  clothing: string
+}
+
 type Item =
-  | { id: number; kind: 'user'; text: string }
+  | { id: number; kind: 'user'; text: string; imageUrl?: string }
   | { id: number; kind: 'agent'; author: string; text: string; streaming: boolean }
   | { id: number; kind: 'activity'; label: string; status: 'running' | 'done'; tool: string; callId?: string }
   | { id: number; kind: 'task'; name: string; cost: string; updated: boolean }
   | { id: number; kind: 'proposals'; rows: ProposalRow[] }
   | { id: number; kind: 'approved'; proposalId: string }
+  | { id: number; kind: 'briefing'; day: string; rows: BriefingRow[] }
   | { id: number; kind: 'purchase'; title: string; total: number; mandateRef: string }
   | { id: number; kind: 'confirm'; pending: PendingConfirmation }
   | { id: number; kind: 'error'; text: string }
@@ -59,6 +74,12 @@ function activityLabel(call: FunctionCall): string {
       return 'Matching your routine to the catalog · ranking by payback'
     case 'approve_proposal':
       return 'Recording your approval'
+    case 'plan_my_day':
+      return 'Planning the day · one route worker per appointment · traffic, weather, flood layers'
+    case 'get_daily_briefing':
+      return 'Reading today’s briefing'
+    case 'write_departure_blocks':
+      return 'Writing “Leave at” blocks to the calendar'
     default:
       return call.name.replace(/_/g, ' ')
   }
@@ -100,6 +121,7 @@ export function ChatPanel({
   onDataChanged,
   onOpenConsent,
   onShowLedger,
+  onShowBriefing,
 }: {
   ref?: Ref<ChatHandle>
   open: boolean
@@ -108,11 +130,14 @@ export function ChatPanel({
   onDataChanged: () => void
   onOpenConsent: (proposalId: string) => void
   onShowLedger: () => void
+  onShowBriefing: () => void
 }) {
   const [items, setItems] = useState<Item[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [offline, setOffline] = useState(false)
+  const [attachment, setAttachment] = useState<Attachment | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
   const sess = useRef<ChatSession>(new ChatSession())
   const scroller = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
@@ -197,8 +222,10 @@ export function ChatPanel({
             push({ kind: 'proposals', rows: res['proposals'] as ProposalRow[] })
           } else if (name === 'approve_proposal' && res['status'] === 'approved') {
             push({ kind: 'approved', proposalId: String(args['proposal_id'] ?? '') })
+          } else if ((name === 'plan_my_day' || name === 'get_daily_briefing') && Array.isArray(res['cards']) && (res['cards'] as unknown[]).length > 0) {
+            push({ kind: 'briefing', day: String(res['day'] ?? ''), rows: res['cards'] as BriefingRow[] })
           }
-          if (['add_routine_task', 'propose_automations', 'approve_proposal'].includes(name)) onDataChanged()
+          if (['add_routine_task', 'propose_automations', 'approve_proposal', 'plan_my_day', 'write_departure_blocks'].includes(name)) onDataChanged()
           break
         }
         case 'confirm':
@@ -223,7 +250,8 @@ export function ChatPanel({
   const send = useCallback(
     async (text: string) => {
       const t = text.trim()
-      if (!t || busy) return
+      const photo = attachment
+      if ((!t && !photo) || busy) return
       if (!sess.current.ready) {
         try {
           await sess.current.init()
@@ -235,13 +263,33 @@ export function ChatPanel({
         }
       }
       setInput('')
+      setAttachment(null)
       stickToBottom.current = true
-      push({ kind: 'user', text: t })
+      push({ kind: 'user', text: t || (photo ? 'Here is a photo of my routine.' : ''), imageUrl: photo?.previewUrl })
       setBusy(true)
-      await sess.current.send(t, onEvent)
+      await sess.current.send(t, onEvent, photo ?? undefined)
     },
-    [busy, onEvent, push],
+    [busy, attachment, onEvent, push],
   )
+
+  // Photo → downscaled JPEG (≤1280px) → base64. Handwritten lists, boletos,
+  // school notes: Gemini reads the pixels directly, no OCR step.
+  const attachFile = useCallback(async (file: File) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    await new Promise<void>((ok, fail) => {
+      img.onload = () => ok()
+      img.onerror = () => fail(new Error('bad image'))
+      img.src = url
+    })
+    const scale = Math.min(1, 1280 / Math.max(img.width, img.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(img.width * scale)
+    canvas.height = Math.round(img.height * scale)
+    canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height)
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+    setAttachment({ mimeType: 'image/jpeg', data: dataUrl.split(',')[1], previewUrl: url })
+  }, [])
 
   const answer = useCallback(
     async (item: Extract<Item, { kind: 'confirm' }>, yes: boolean) => {
@@ -360,7 +408,7 @@ export function ChatPanel({
           )}
 
           {items.map((it, i) => (
-            <Row key={it.id} item={it} prev={items[i - 1]} proposals={proposals} onAnswer={answer} onSend={send} onOpenConsent={onOpenConsent} onShowLedger={onShowLedger} />
+            <Row key={it.id} item={it} prev={items[i - 1]} proposals={proposals} onAnswer={answer} onSend={send} onOpenConsent={onOpenConsent} onShowLedger={onShowLedger} onShowBriefing={onShowBriefing} />
           ))}
 
           {showTyping && (
@@ -391,6 +439,15 @@ export function ChatPanel({
               ))}
             </div>
           )}
+          {attachment && (
+            <div className="flex items-center gap-2 text-xs text-ink-secondary">
+              <img src={attachment.previewUrl} alt="" className="h-12 w-12 object-cover rounded-lg border-subtle" />
+              <span>Photo attached — I’ll read every item on it.</span>
+              <button type="button" onClick={() => setAttachment(null)} className="ml-auto rounded-pill px-2 py-1 hover:bg-surface-subtle cursor-pointer" aria-label="Remove photo">
+                ✕
+              </button>
+            </div>
+          )}
           <form
             className="flex items-end gap-2"
             onSubmit={(e) => {
@@ -398,6 +455,28 @@ export function ChatPanel({
               void send(input)
             }}
           >
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) void attachFile(f)
+                e.target.value = ''
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInput.current?.click()}
+              disabled={busy}
+              title="Photo of a list, calendar, boletos or note"
+              aria-label="Attach a photo"
+              className="rounded-full w-10 h-10 shrink-0 border-subtle bg-surface-raised cursor-pointer hover:bg-sun-soft/40 disabled:opacity-40 text-base"
+            >
+              📷
+            </button>
             <textarea
               ref={textarea}
               value={input}
@@ -423,7 +502,7 @@ export function ChatPanel({
             ) : (
               <button
                 type="submit"
-                disabled={!input.trim()}
+                disabled={!input.trim() && !attachment}
                 className="rounded-pill bg-ink text-white px-4 py-2.5 text-sm cursor-pointer disabled:opacity-40 font-medium"
               >
                 Send
@@ -444,6 +523,7 @@ function Row({
   onSend,
   onOpenConsent,
   onShowLedger,
+  onShowBriefing,
 }: {
   item: Item
   prev?: Item
@@ -452,12 +532,18 @@ function Row({
   onSend: (text: string) => void
   onOpenConsent: (id: string) => void
   onShowLedger: () => void
+  onShowBriefing: () => void
 }) {
   switch (item.kind) {
     case 'user':
       return (
         <div className="chat-item flex justify-end">
-          <div className="max-w-[85%] bg-sun-soft/70 rounded-2xl rounded-br-md px-3.5 py-2 text-sm whitespace-pre-wrap">{item.text}</div>
+          <div className="max-w-[85%] bg-sun-soft/70 rounded-2xl rounded-br-md px-3.5 py-2 text-sm whitespace-pre-wrap">
+            {item.imageUrl && (
+              <img src={item.imageUrl} alt="attached photo" className="block max-h-40 rounded-xl mb-2 border border-sun-deep/30" />
+            )}
+            {item.text}
+          </div>
         </div>
       )
     case 'agent': {
@@ -589,6 +675,37 @@ function Row({
         </Card>
       )
     }
+    case 'briefing':
+      return (
+        <Card tag={`daily briefing · ${item.day}`}>
+          <div className="divide-y divide-[rgba(36,35,33,0.06)]">
+            {item.rows.map((r) => (
+              <div key={r.card_id} className="py-2 first:pt-0 last:pb-0 flex items-center gap-3">
+                <div className="tabular text-sm font-semibold w-12 shrink-0" style={{ fontFamily: 'var(--font-display)' }}>{r.leave_at}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm truncate">{r.event}</div>
+                  <div className="text-xs text-ink-secondary truncate">
+                    {r.event_at} · {r.route}
+                    {r.traffic_minutes > 0 && <> · <span className="text-danger">+{r.traffic_minutes} min {r.traffic_cost}</span></>}
+                  </div>
+                </div>
+                {r.flood_risk !== 'none' && (
+                  <span
+                    className="shrink-0 text-[10px] rounded-pill px-2 py-0.5"
+                    style={r.flood_risk === 'alert' ? { background: '#fce8e6', color: '#b3261e' } : { background: '#fbf0cc', color: '#8a6d0b' }}
+                    title={r.flood_detail}
+                  >
+                    {r.flood_risk === 'alert' ? 'flood alert' : 'flood history'}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          <button onClick={onShowBriefing} className="mt-2 text-xs text-ink-secondary hover:text-ink cursor-pointer bg-transparent">
+            open the Briefing →
+          </button>
+        </Card>
+      )
     case 'purchase':
       return (
         <Card tag="purchased · AP2 v0.2 · simulated" tone="success">

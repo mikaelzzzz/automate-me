@@ -64,6 +64,38 @@ export interface MandateRecord {
   updated_at: string
 }
 
+export interface BriefingCard {
+  id: string
+  day: string
+  event_summary: string
+  event_start: string
+  origin: string
+  destination: string
+  departure_time: string
+  route_summary: string
+  route_minutes: number
+  traffic_minutes: number
+  traffic_cents: number
+  weather: string
+  weather_temp_c: number
+  rain_chance_pct: number
+  clothing: string
+  flood_risk: 'none' | 'historic' | 'alert'
+  flood_detail: string
+  flood_points: number
+  alert_headline?: string
+  alternative_note: string
+  notes?: string[]
+  calendar_block_id?: string
+  calendar_block_mode?: 'simulated' | 'google'
+}
+
+export interface Briefing {
+  day: string
+  cards: BriefingCard[]
+  available: boolean
+}
+
 export interface ConsentResult {
   mandate_record_id: string
   checkout: {
@@ -99,6 +131,10 @@ export const api = {
     }).then((r) => j<ConsentResult>(r)),
   ledger: () => fetch('/app/api/ledger').then((r) => j<LedgerEntry[]>(r)),
   mandates: () => fetch('/app/api/mandates').then((r) => j<MandateRecord[]>(r)),
+  briefing: () => fetch('/app/api/briefing').then((r) => j<Briefing>(r)),
+  runBriefing: () => fetch('/app/api/briefing/run', { method: 'POST' }).then((r) => j<Briefing>(r)),
+  writeBlock: (cardId: string) =>
+    fetch(`/app/api/briefing/${cardId}/block`, { method: 'POST' }).then((r) => j<BriefingCard>(r)),
 }
 
 // Money: integer centavos → "R$1,500.00". Never do float math on money.

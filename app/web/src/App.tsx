@@ -4,6 +4,7 @@ import { Dashboard } from './pages/Dashboard'
 import { ChatPanel, type ChatHandle } from './components/ChatPanel'
 import { ConsentModal } from './components/ConsentModal'
 import { LedgerView } from './components/LedgerView'
+import { BriefingView } from './components/BriefingView'
 
 type Tab = 'Dashboard' | 'Briefing' | 'Teams' | 'Ledger'
 const TABS: Tab[] = ['Dashboard', 'Briefing', 'Teams', 'Ledger']
@@ -26,9 +27,11 @@ export default function App() {
   const [error, setError] = useState('')
   const [chatOpen, setChatOpen] = useState(readChatOpen)
   const [consentFor, setConsentFor] = useState<Proposal | null>(null)
+  const [version, setVersion] = useState(0)
   const chat = useRef<ChatHandle>(null)
 
   const refresh = useCallback(() => {
+    setVersion((v) => v + 1)
     Promise.all([api.pnl(), api.proposals(), api.ledger()])
       .then(([p, pr, l]) => {
         setPnl(p)
@@ -119,12 +122,7 @@ export default function App() {
             ) : (
               !error && <div className="text-ink-tertiary text-sm py-16 text-center">loading…</div>
             ))}
-          {tab === 'Briefing' && (
-            <ComingSoon
-              title="Daily Briefing"
-              line="Departure times from live traffic, what to wear, and flood alerts for São Paulo — pushed before you ask."
-            />
-          )}
+          {tab === 'Briefing' && <BriefingView onAsk={askAgent} version={version} />}
           {tab === 'Teams' && (
             <ComingSoon
               title="Team automation report"
@@ -142,6 +140,10 @@ export default function App() {
           onDataChanged={refresh}
           onOpenConsent={openConsent}
           onShowLedger={showLedger}
+          onShowBriefing={() => {
+            setTab('Briefing')
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+          }}
         />
       </div>
 

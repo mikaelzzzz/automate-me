@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"time"
+	_ "time/tzdata" // distroless has no zoneinfo; the briefing needs America/Sao_Paulo
 
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model/gemini"
@@ -18,6 +19,7 @@ import (
 	"google.golang.org/genai"
 
 	"automate-me/app/internal/agents"
+	"automate-me/app/internal/briefing"
 	"automate-me/app/internal/httpapi"
 	"automate-me/app/internal/shopping"
 	"automate-me/app/internal/store"
@@ -49,14 +51,41 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 
+	// Daily Briefing: Maps Platform key (Routes + Weather). Absent → the
+	// briefing endpoints and the day_planner report "unavailable".
+	var planner *briefing.Builder
+	var blocks briefing.BlockWriter
+	if key := os.Getenv("MAPS_API_KEY"); key != "" {
+		loc, err := time.LoadLocation("America/Sao_Paulo")
+		if err != nil {
+			log.Fatalf("load timezone: %v", err)
+		}
+		planner = briefing.NewBuilder(briefing.NewMapsClient(key), loc)
+		blocks = briefing.SimulatedBlocks{}
+		mode := "simulated"
+		if calID := os.Getenv("CALENDAR_ID"); calID != "" {
+			if g, err := briefing.NewGoogleCalendarBlocks(ctx, calID); err != nil {
+				slog.Warn("google calendar unavailable; departure blocks simulated", "err", err)
+			} else {
+				blocks = g
+				mode = "google:" + calID
+			}
+		}
+		slog.Info("daily briefing enabled", "tz", loc.String(), "flood_points", len(briefing.HistoricFloodPoints()), "calendar", mode)
+	} else {
+		slog.Warn("MAPS_API_KEY not set; daily briefing disabled")
+	}
+
 	api := &httpapi.Handler{
-		Store:   st,
-		Trusted: surface,
-		UserID:  func(*http.Request) string { return store.DemoUserID },
+		Store:    st,
+		Trusted:  surface,
+		Briefing: planner,
+		Blocks:   blocks,
+		UserID:   func(*http.Request) string { return store.DemoUserID },
 	}
 	api.Register(mux)
 
-	if err := mountChat(ctx, mux, st); err != nil {
+	if err := mountChat(ctx, mux, st, planner, blocks); err != nil {
 		// Dashboard + consent must come up even without a model key.
 		slog.Warn("chat API disabled (no model?)", "err", err)
 	}
@@ -76,14 +105,16 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func mountChat(ctx context.Context, mux *http.ServeMux, st store.Store) error {
+func mountChat(ctx context.Context, mux *http.ServeMux, st store.Store, planner *briefing.Builder, blocks briefing.BlockWriter) error {
 	llm, err := gemini.NewModel(ctx, cmp.Or(os.Getenv("GEMINI_MODEL"), "gemini-3.5-flash"), &genai.ClientConfig{})
 	if err != nil {
 		return err
 	}
 	root, err := agents.New(llm, agents.Deps{
-		Store:  st,
-		UserID: func(agent.Context) string { return store.DemoUserID },
+		Store:    st,
+		UserID:   func(agent.Context) string { return store.DemoUserID },
+		Briefing: planner,
+		Blocks:   blocks,
 	})
 	if err != nil {
 		return err

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"automate-me/app/internal/briefing"
 	"automate-me/app/internal/catalog"
 	"automate-me/app/internal/engine"
 	"automate-me/app/internal/store"
@@ -17,6 +19,9 @@ import (
 type Handler struct {
 	Store   store.Store
 	Trusted *trusted.Surface
+	// Briefing is nil when MAPS_API_KEY is not configured (endpoints answer 503).
+	Briefing *briefing.Builder
+	Blocks   briefing.BlockWriter
 	// UserID resolves the acting user (demo: fixed).
 	UserID func(*http.Request) string
 }
@@ -28,6 +33,93 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /app/api/trusted/consent", h.consent)
 	mux.HandleFunc("GET /app/api/ledger", h.ledger)
 	mux.HandleFunc("GET /app/api/mandates", h.mandates)
+	mux.HandleFunc("GET /app/api/briefing", h.briefing)
+	mux.HandleFunc("POST /app/api/briefing/run", h.runBriefing)
+	mux.HandleFunc("POST /app/api/briefing/{id}/block", h.briefingBlock)
+}
+
+type briefingResponse struct {
+	Day       string               `json:"day"`
+	Cards     []store.BriefingCard `json:"cards"`
+	Available bool                 `json:"available"`
+}
+
+func (h *Handler) briefing(w http.ResponseWriter, r *http.Request) {
+	if h.Briefing == nil {
+		writeJSON(w, http.StatusOK, briefingResponse{Available: false, Cards: []store.BriefingCard{}})
+		return
+	}
+	day := h.Briefing.DayKey(h.Briefing.DayFor(h.Briefing.Now()))
+	cards, err := h.Store.ListBriefing(r.Context(), h.UserID(r), day)
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	if cards == nil {
+		cards = []store.BriefingCard{}
+	}
+	writeJSON(w, http.StatusOK, briefingResponse{Day: day, Cards: cards, Available: true})
+}
+
+// runBriefing is what Cloud Scheduler (and the "Plan my day" button) hits:
+// fan out one route worker per appointment, price the traffic, check
+// weather and flood layers, persist the cards.
+func (h *Handler) runBriefing(w http.ResponseWriter, r *http.Request) {
+	if h.Briefing == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "MAPS_API_KEY not configured"})
+		return
+	}
+	uid := h.UserID(r)
+	u, err := h.Store.GetUser(r.Context(), uid)
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	day := h.Briefing.DayFor(h.Briefing.Now())
+	events := briefing.DemoAppointments(day, h.Briefing.Loc)
+	started := time.Now()
+	cards := h.Briefing.Build(r.Context(), uid, u.HourlyRateCents, events)
+	for _, c := range cards {
+		if err := h.Store.PutBriefingCard(r.Context(), c); err != nil {
+			httpErr(w, err)
+			return
+		}
+	}
+	slog.Info("briefing built", "day", h.Briefing.DayKey(day), "cards", len(cards), "took", time.Since(started).Round(time.Millisecond))
+	writeJSON(w, http.StatusOK, briefingResponse{Day: h.Briefing.DayKey(day), Cards: cards, Available: true})
+}
+
+// briefingBlock writes the "Leave at HH:MM" block for one card.
+func (h *Handler) briefingBlock(w http.ResponseWriter, r *http.Request) {
+	if h.Briefing == nil || h.Blocks == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "briefing not configured"})
+		return
+	}
+	uid := h.UserID(r)
+	day := h.Briefing.DayKey(h.Briefing.DayFor(h.Briefing.Now()))
+	cards, err := h.Store.ListBriefing(r.Context(), uid, day)
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	for _, c := range cards {
+		if c.ID != r.PathValue("id") {
+			continue
+		}
+		id, mode, err := h.Blocks.WriteDepartureBlock(r.Context(), c)
+		if err != nil {
+			httpErr(w, err)
+			return
+		}
+		c.CalendarBlockID, c.CalendarBlockMode = id, mode
+		if err := h.Store.PutBriefingCard(r.Context(), c); err != nil {
+			httpErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, c)
+		return
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such briefing card today"})
 }
 
 // proposalView enriches a proposal with catalog facts the SPA needs to render
