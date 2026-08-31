@@ -22,6 +22,9 @@ type Handler struct {
 	// Briefing is nil when MAPS_API_KEY is not configured (endpoints answer 503).
 	Briefing *briefing.Builder
 	Blocks   briefing.BlockWriter
+	// Events is where the day's appointments come from: the connected Google
+	// Calendar, or the seeded São Paulo day when none is.
+	Events briefing.EventSource
 	// Live powers the voice session; zero value disables it.
 	Live LiveDeps
 	// UserID resolves the acting user (demo: fixed).
@@ -46,6 +49,9 @@ type briefingResponse struct {
 	Day       string               `json:"day"`
 	Cards     []store.BriefingCard `json:"cards"`
 	Available bool                 `json:"available"`
+	// Note states the shape of the day the cards came from — how many
+	// appointments were remote, unplaced or ignored.
+	Note string `json:"note,omitempty"`
 }
 
 func (h *Handler) briefing(w http.ResponseWriter, r *http.Request) {
@@ -80,17 +86,23 @@ func (h *Handler) runBriefing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	day := h.Briefing.DayFor(h.Briefing.Now())
-	events := briefing.DemoAppointments(day, h.Briefing.Loc)
+	sched, err := h.Briefing.Schedule(r.Context(), h.Events, day)
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
 	started := time.Now()
-	cards := h.Briefing.Build(r.Context(), uid, u.HourlyRateCents, events)
+	cards := h.Briefing.Build(r.Context(), uid, u.HourlyRateCents, sched.Events)
 	for _, c := range cards {
 		if err := h.Store.PutBriefingCard(r.Context(), c); err != nil {
 			httpErr(w, err)
 			return
 		}
 	}
-	slog.Info("briefing built", "day", h.Briefing.DayKey(day), "cards", len(cards), "took", time.Since(started).Round(time.Millisecond))
-	writeJSON(w, http.StatusOK, briefingResponse{Day: h.Briefing.DayKey(day), Cards: cards, Available: true})
+	slog.Info("briefing built", "day", h.Briefing.DayKey(day), "cards", len(cards),
+		"remote", sched.Remote, "no_place", sched.NoPlace, "skipped", sched.Skipped,
+		"took", time.Since(started).Round(time.Millisecond))
+	writeJSON(w, http.StatusOK, briefingResponse{Day: h.Briefing.DayKey(day), Cards: cards, Available: true, Note: sched.Note})
 }
 
 // briefingBlock writes the "Leave at HH:MM" block for one card.

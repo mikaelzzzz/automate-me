@@ -3,6 +3,7 @@ package briefing
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,31 +13,194 @@ import (
 	"automate-me/app/internal/store"
 )
 
-// GoogleCalendarBlocks writes departure blocks to a real Google Calendar
-// using Application Default Credentials: on Cloud Run that is the runtime
+// GoogleCalendar is both ends of the calendar connection: it reads the day's
+// real appointments (EventSource) and writes the departure blocks back
+// (BlockWriter), over one authenticated service.
+//
+// Auth is Application Default Credentials: on Cloud Run that is the runtime
 // service account, which the user grants "make changes to events" on the
 // target calendar (no OAuth dance, no service-account keys — the org forbids
 // them). Locally: `gcloud auth application-default login --scopes=…calendar`.
-type GoogleCalendarBlocks struct {
-	svc        *calendar.Service
-	calendarID string
+type GoogleCalendar struct {
+	svc *calendar.Service
+	// write goes to the first calendar; read spans all of them (a personal
+	// calendar usually holds the appointments that involve travel).
+	writeID string
+	readIDs []string
+	loc     *time.Location
+	// Home is the origin for the first trip of the day (HOME_ADDRESS).
+	Home string
+	// MaxTrips bounds the Routes API calls one briefing can make.
+	MaxTrips int
 }
 
-func NewGoogleCalendarBlocks(ctx context.Context, calendarID string) (*GoogleCalendarBlocks, error) {
+// NewGoogleCalendar opens the calendars named by CALENDAR_ID (comma-separated;
+// the first one is where blocks are written) and fails fast on any the
+// identity cannot see.
+func NewGoogleCalendar(ctx context.Context, calendarIDs string, loc *time.Location, home string) (*GoogleCalendar, error) {
+	var ids []string
+	for _, id := range strings.Split(calendarIDs, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("no calendar id given")
+	}
 	svc, err := calendar.NewService(ctx, option.WithScopes(calendar.CalendarEventsScope))
 	if err != nil {
 		return nil, fmt.Errorf("calendar service: %w", err)
 	}
-	// Fail fast on a calendar the identity cannot see.
-	if _, err := svc.Calendars.Get(calendarID).Context(ctx).Do(); err != nil {
-		return nil, fmt.Errorf("calendar %q not accessible: %w", calendarID, err)
+	for _, id := range ids {
+		if _, err := svc.Calendars.Get(id).Context(ctx).Do(); err != nil {
+			return nil, fmt.Errorf("calendar %q not accessible: %w", id, err)
+		}
 	}
-	return &GoogleCalendarBlocks{svc: svc, calendarID: calendarID}, nil
+	return &GoogleCalendar{svc: svc, writeID: ids[0], readIDs: ids, loc: loc, Home: strings.TrimSpace(home), MaxTrips: 6}, nil
+}
+
+// Calendars lists the calendars this connection reads, first one written to.
+func (g *GoogleCalendar) Calendars() []string { return g.readIDs }
+
+// EventsFor reads one local day across every connected calendar and splits it
+// into trips, screen time, and noise. Only the trips cost a route call.
+func (g *GoogleCalendar) EventsFor(ctx context.Context, day time.Time) (DaySchedule, error) {
+	local := day.In(g.loc)
+	from := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, g.loc)
+	to := from.AddDate(0, 0, 1)
+
+	var raw []*calendar.Event
+	for _, id := range g.readIDs {
+		items, err := g.svc.Events.List(id).
+			SingleEvents(true).OrderBy("startTime").
+			TimeMin(from.Format(time.RFC3339)).TimeMax(to.Format(time.RFC3339)).
+			MaxResults(100).Context(ctx).Do()
+		if err != nil {
+			return DaySchedule{}, fmt.Errorf("list events on %q: %w", id, err)
+		}
+		raw = append(raw, items.Items...)
+	}
+	return g.classify(raw), nil
+}
+
+// classify turns raw calendar events into a DaySchedule. Pure given its
+// input — the API call is the only thing above it.
+func (g *GoogleCalendar) classify(raw []*calendar.Event) DaySchedule {
+	type dated struct {
+		ev    *calendar.Event
+		start time.Time
+		end   time.Time
+	}
+	var day DaySchedule
+	var items []dated
+	total := 0
+
+	for _, ev := range raw {
+		if ev == nil || ev.Start == nil || ev.Start.DateTime == "" {
+			continue // all-day events and malformed rows are not appointments
+		}
+		start, err := time.Parse(time.RFC3339, ev.Start.DateTime)
+		if err != nil {
+			continue
+		}
+		total++
+		if skipEvent(ev) {
+			day.Skipped++
+			continue
+		}
+		end := start.Add(time.Hour)
+		if ev.End != nil && ev.End.DateTime != "" {
+			if e, err := time.Parse(time.RFC3339, ev.End.DateTime); err == nil {
+				end = e
+			}
+		}
+		items = append(items, dated{ev: ev, start: start.In(g.loc), end: end.In(g.loc)})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].start.Before(items[j].start) })
+
+	var lastPlace string
+	var lastEnd time.Time
+	missingHome := false
+	for _, it := range items {
+		loc := strings.TrimSpace(it.ev.Location)
+		switch {
+		case it.ev.ConferenceData != nil || it.ev.HangoutLink != "" || isRemoteLocation(loc):
+			day.Remote++
+			continue
+		case loc == "":
+			day.NoPlace++
+			continue
+		}
+		// Same place as the appointment before it: no trip between them.
+		if strings.EqualFold(loc, lastPlace) {
+			lastEnd = it.end
+			continue
+		}
+		origin := g.Home
+		// Chained trip: coming straight from the previous appointment, if it
+		// ends within four hours of this one starting.
+		if lastPlace != "" && !lastEnd.IsZero() && it.start.Sub(lastEnd) <= 4*time.Hour {
+			origin = lastPlace
+		}
+		if origin == "" {
+			missingHome = true
+			day.NoPlace++
+			continue
+		}
+		if len(day.Events) >= max(g.MaxTrips, 1) {
+			day.Skipped++
+			continue
+		}
+		day.Events = append(day.Events, Event{
+			ID:          eventKey(it.ev),
+			Summary:     strings.TrimSpace(it.ev.Summary),
+			Start:       it.start,
+			Origin:      origin,
+			Destination: loc,
+		})
+		lastPlace, lastEnd = loc, it.end
+	}
+	return day.withNote(total, missingHome)
+}
+
+// skipEvent drops what is on the calendar but is not an appointment to travel
+// to: out-of-office and working-location rows, cancelled events, invitations
+// the user declined, and the departure blocks this app wrote itself (reading
+// those back would brief a trip to a trip).
+func skipEvent(ev *calendar.Event) bool {
+	if ev.Status == "cancelled" {
+		return true
+	}
+	switch ev.EventType {
+	case "outOfOffice", "workingLocation", "birthday", "focusTime":
+		return true
+	}
+	if ev.ExtendedProperties != nil && ev.ExtendedProperties.Private["automate_me_kind"] != "" {
+		return true
+	}
+	for _, a := range ev.Attendees {
+		if a.Self && a.ResponseStatus == "declined" {
+			return true
+		}
+	}
+	return false
+}
+
+// eventKey is a stable, filename-safe id for a card built from this event.
+func eventKey(ev *calendar.Event) string {
+	id := ev.Id
+	if id == "" {
+		id = strings.ToLower(strings.ReplaceAll(ev.Summary, " ", "-"))
+	}
+	if len(id) > 40 {
+		id = id[:40]
+	}
+	return id
 }
 
 // WriteDepartureBlock inserts (or updates, when the card already has a
 // google block) a "Leave at HH:MM → event" event spanning the drive.
-func (g *GoogleCalendarBlocks) WriteDepartureBlock(ctx context.Context, card store.BriefingCard) (string, string, error) {
+func (g *GoogleCalendar) WriteDepartureBlock(ctx context.Context, card store.BriefingCard) (string, string, error) {
 	loc := card.EventStart.Location()
 	dep := card.DepartureTime.In(loc)
 	end := card.EventStart.In(loc)
@@ -72,13 +236,13 @@ func (g *GoogleCalendarBlocks) WriteDepartureBlock(ctx context.Context, card sto
 		},
 	}
 	if card.CalendarBlockMode == "google" && card.CalendarBlockID != "" {
-		updated, err := g.svc.Events.Update(g.calendarID, card.CalendarBlockID, ev).Context(ctx).Do()
+		updated, err := g.svc.Events.Update(g.writeID, card.CalendarBlockID, ev).Context(ctx).Do()
 		if err == nil {
 			return updated.Id, "google", nil
 		}
 		// fall through to insert if the old event vanished
 	}
-	created, err := g.svc.Events.Insert(g.calendarID, ev).Context(ctx).Do()
+	created, err := g.svc.Events.Insert(g.writeID, ev).Context(ctx).Do()
 	if err != nil {
 		return "", "", fmt.Errorf("calendar insert: %w", err)
 	}

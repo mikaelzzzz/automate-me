@@ -92,8 +92,12 @@ export function BriefingView({ onAsk, version }: { onAsk: (text: string) => void
       {error && <div className="bg-alert-tint text-alert rounded-xl px-4 py-3 text-sm">{error}</div>}
 
       {data.cards.length === 0 && !running && (
-        <Empty title="Your day, planned before you ask" line="Three appointments seeded for the demo. Plan it and the agent computes departure times from live traffic, weather at departure and flood risk per route." />
+        data.note
+          ? <Empty title={`No trip to price ${when}`} line={data.note} />
+          : <Empty title="Your day, planned before you ask" line="Three appointments seeded for the demo. Plan it and the agent computes departure times from live traffic, weather at departure and flood risk per route." />
       )}
+
+      {data.note && data.cards.length > 0 && <p className="text-ink-secondary text-sm m-0">{data.note}</p>}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {data.cards.map((c, i) => (

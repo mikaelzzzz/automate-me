@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"automate-me/app/internal/briefing"
 	"automate-me/app/internal/catalog"
 	"automate-me/app/internal/engine"
 	"automate-me/app/internal/proposer"
@@ -175,16 +174,23 @@ func (d Deps) PlanMyDay(ctx context.Context, userID string) (briefingOut, error)
 		return briefingOut{}, err
 	}
 	day := d.Briefing.DayFor(d.Briefing.Now())
-	cards := d.Briefing.Build(ctx, u.ID, u.HourlyRateCents, briefing.DemoAppointments(day, d.Briefing.Loc))
+	sched, err := d.Briefing.Schedule(ctx, d.Events, day)
+	if err != nil {
+		return briefingOut{Note: "The calendar could not be read: " + err.Error()}, nil
+	}
+	cards := d.Briefing.Build(ctx, u.ID, u.HourlyRateCents, sched.Events)
 	for _, c := range cards {
 		if err := d.Store.PutBriefingCard(ctx, c); err != nil {
 			return briefingOut{}, err
 		}
 	}
-	return briefingOut{
-		Day: d.Briefing.DayKey(day), Cards: d.rows(cards),
-		Note: "Numbers are measured (Routes/Weather/GeoSampa), not estimated. Offer to write the departure blocks to the calendar.",
-	}, nil
+	note := sched.Note + " Numbers are measured (Routes/Weather/GeoSampa), not estimated."
+	if len(cards) > 0 {
+		note += " Offer to write the departure blocks to the calendar."
+	} else {
+		note += " Say plainly that no trip is planned today instead of inventing one."
+	}
+	return briefingOut{Day: d.Briefing.DayKey(day), Cards: d.rows(cards), Note: note}, nil
 }
 
 // GetBriefing reads the briefing already built for the day being planned.

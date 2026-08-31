@@ -103,6 +103,9 @@ export interface Briefing {
   day: string
   cards: BriefingCard[]
   available: boolean
+  // What the calendar day looked like: how many appointments were remote,
+  // unplaced, or ignored. Present once a real calendar is connected.
+  note?: string
 }
 
 export interface ConsentResult {

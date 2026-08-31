@@ -5,6 +5,13 @@
 #   ONLY=app ./infra/deploy.sh   |   ONLY=merchant ./infra/deploy.sh
 #   SKIP_BUILD=1 ./infra/deploy.sh                          # redeploy last built tag
 #
+# Real calendar (Daily Briefing reads the day and writes departure blocks):
+#   CALENDAR_ID=you@example.com,c_personal@group.calendar.google.com \
+#   HOME_ADDRESS="Rua X 100, São Paulo" ./infra/deploy.sh
+# The calendars must be shared with the runtime service account with
+# "make changes to events". Both values are carried over from the running
+# service when not passed, so a plain redeploy never silently unplugs them.
+#
 # Both services keep state in memory (store, idempotency, merchant signing key),
 # so they run as exactly one instance. MIN_INSTANCES=0 after the hackathon.
 set -euo pipefail
@@ -17,6 +24,8 @@ SECRET_NAME="${SECRET_NAME:-google-api-key}"
 MIN_INSTANCES="${MIN_INSTANCES:-1}"
 ONLY="${ONLY:-}"
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.5-flash}"
+CALENDAR_ID="${CALENDAR_ID:-}"
+HOME_ADDRESS="${HOME_ADDRESS:-}"
 
 if [[ "$PROJECT_ID" == "ecosistema-karol-prod" ]]; then
   echo "refusing to deploy to ecosistema-karol-prod" >&2
@@ -58,6 +67,24 @@ if [[ -z "$ONLY" || "$ONLY" == merchant ]]; then
 fi
 
 if [[ -z "$ONLY" || "$ONLY" == app ]]; then
+  # Keep the calendar wiring across redeploys: --set-env-vars replaces the whole
+  # set, so an unset CALENDAR_ID would silently drop the app back to seed data.
+  current_env() {
+    gcloud run services describe automate-me --project="$PROJECT_ID" --region="$REGION" \
+      --format="value(spec.template.spec.containers[0].env.filter(\"name:$1\").extract(value).flatten())" 2>/dev/null || true
+  }
+  [[ -n "$CALENDAR_ID" ]] || CALENDAR_ID="$(current_env CALENDAR_ID)"
+  [[ -n "$HOME_ADDRESS" ]] || HOME_ADDRESS="$(current_env HOME_ADDRESS)"
+  # ^@^ delimiter: addresses contain commas.
+  APP_ENV="^@^MERCHANT_URL=$MERCHANT_URL@MERCHANT_AUTH=idtoken@DEMO_MODE=seed@GEMINI_MODEL=$GEMINI_MODEL"
+  if [[ -n "$CALENDAR_ID" ]]; then
+    APP_ENV="$APP_ENV@CALENDAR_ID=$CALENDAR_ID"
+    [[ -n "$HOME_ADDRESS" ]] && APP_ENV="$APP_ENV@HOME_ADDRESS=$HOME_ADDRESS"
+    echo "calendar: $CALENDAR_ID${HOME_ADDRESS:+ (home: $HOME_ADDRESS)}"
+  else
+    echo "calendar: none — the briefing runs on seeded appointments"
+  fi
+
   log "deploy automate-me (public)"
   gcloud run deploy automate-me --project="$PROJECT_ID" --region="$REGION" \
     --image="$REPO/app:$TAG" \
@@ -65,7 +92,7 @@ if [[ -z "$ONLY" || "$ONLY" == app ]]; then
     --allow-unauthenticated \
     --min-instances="$MIN_INSTANCES" --max-instances=1 \
     --memory=512Mi --cpu=1 --timeout=300 \
-    --set-env-vars="MERCHANT_URL=$MERCHANT_URL,MERCHANT_AUTH=idtoken,DEMO_MODE=seed,GEMINI_MODEL=$GEMINI_MODEL" \
+    --set-env-vars="$APP_ENV" \
     --set-secrets="GOOGLE_API_KEY=$SECRET_NAME:latest,MAPS_API_KEY=maps-api-key:latest" \
     --labels="app=automate-me,service=app" --quiet \
   || { echo "if this failed on allUsers: org policy iam.allowedPolicyMemberDomains blocks public services;" >&2

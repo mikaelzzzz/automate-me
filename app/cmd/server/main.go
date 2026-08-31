@@ -65,20 +65,22 @@ func main() {
 	// briefing endpoints and the day_planner report "unavailable".
 	var planner *briefing.Builder
 	var blocks briefing.BlockWriter
+	var events briefing.EventSource
 	if key := os.Getenv("MAPS_API_KEY"); key != "" {
 		loc, err := time.LoadLocation("America/Sao_Paulo")
 		if err != nil {
 			log.Fatalf("load timezone: %v", err)
 		}
 		planner = briefing.NewBuilder(briefing.NewMapsClient(key), loc)
-		blocks = briefing.SimulatedBlocks{}
+		// No calendar connected: seeded appointments, simulated blocks.
+		blocks, events = briefing.SimulatedBlocks{}, briefing.DemoSource{Loc: loc}
 		mode := "simulated"
 		if calID := os.Getenv("CALENDAR_ID"); calID != "" {
-			if g, err := briefing.NewGoogleCalendarBlocks(ctx, calID); err != nil {
-				slog.Warn("google calendar unavailable; departure blocks simulated", "err", err)
+			if g, err := briefing.NewGoogleCalendar(ctx, calID, loc, os.Getenv("HOME_ADDRESS")); err != nil {
+				slog.Warn("google calendar unavailable; seeded appointments, simulated blocks", "err", err)
 			} else {
-				blocks = g
-				mode = "google:" + calID
+				blocks, events = g, g
+				mode = "google:" + strings.Join(g.Calendars(), ",")
 			}
 		}
 		slog.Info("daily briefing enabled", "tz", loc.String(), "flood_points", len(briefing.HistoricFloodPoints()), "calendar", mode)
@@ -94,6 +96,7 @@ func main() {
 		UserID:   func(agent.Context) string { return store.DemoUserID },
 		Briefing: planner,
 		Blocks:   blocks,
+		Events:   events,
 	}
 	// Build the graph first: the voice tools delegate into it, so it has to
 	// exist before the live tool set is frozen.
@@ -135,6 +138,7 @@ func main() {
 		Trusted:  surface,
 		Briefing: planner,
 		Blocks:   blocks,
+		Events:   events,
 		Live:     live,
 		UserID:   func(*http.Request) string { return store.DemoUserID },
 	}
