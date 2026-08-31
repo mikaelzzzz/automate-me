@@ -76,7 +76,8 @@ if [[ -z "$ONLY" || "$ONLY" == app ]]; then
   [[ -n "$CALENDAR_ID" ]] || CALENDAR_ID="$(current_env CALENDAR_ID)"
   [[ -n "$HOME_ADDRESS" ]] || HOME_ADDRESS="$(current_env HOME_ADDRESS)"
   # ^@^ delimiter: addresses contain commas.
-  APP_ENV="^@^MERCHANT_URL=$MERCHANT_URL@MERCHANT_AUTH=idtoken@DEMO_MODE=seed@GEMINI_MODEL=$GEMINI_MODEL"
+  # FIRESTORE_PROJECT switches ADK sessions from memory to Firestore.
+  APP_ENV="^@^MERCHANT_URL=$MERCHANT_URL@MERCHANT_AUTH=idtoken@DEMO_MODE=seed@GEMINI_MODEL=$GEMINI_MODEL@FIRESTORE_PROJECT=${FIRESTORE_PROJECT:-$PROJECT_ID}"
   if [[ -n "$CALENDAR_ID" ]]; then
     APP_ENV="$APP_ENV@CALENDAR_ID=$CALENDAR_ID"
     [[ -n "$HOME_ADDRESS" ]] && APP_ENV="$APP_ENV@HOME_ADDRESS=$HOME_ADDRESS"

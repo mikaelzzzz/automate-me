@@ -106,7 +106,7 @@ log "runtime service account $RUN_SA"
 gcloud iam service-accounts describe "$RUN_SA" --project="$PROJECT_ID" >/dev/null 2>&1 \
   || gcloud iam service-accounts create "$RUN_SA_NAME" --project="$PROJECT_ID" \
        --display-name="Automate.me Cloud Run runtime"
-for role in roles/logging.logWriter roles/cloudtrace.agent roles/aiplatform.user; do
+for role in roles/logging.logWriter roles/cloudtrace.agent roles/aiplatform.user roles/datastore.user; do
   retry 8 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$RUN_SA" --role="$role" --condition=None --quiet >/dev/null
 done
@@ -218,9 +218,15 @@ else
     || echo "budget creation failed (non-fatal); create one in the console: Billing → Budgets & alerts"
 fi
 
-# Firestore (pendência 7 — session.Service). Uncomment once code uses it:
-# gcloud services enable firestore.googleapis.com --project="$PROJECT_ID"
-# gcloud firestore databases create --project="$PROJECT_ID" --location="$REGION" --type=firestore-native
+# ------------------------------------------------------------- Firestore ---
+# ADK sessions live here (internal/fsession), so a conversation survives the
+# revision that hosted it. nam5 is the US multi-region; a database can never
+# change location, so this one is created once and kept.
+log "Firestore (agent sessions)"
+gcloud services enable firestore.googleapis.com --project="$PROJECT_ID" --quiet
+gcloud firestore databases describe --database='(default)' --project="$PROJECT_ID" >/dev/null 2>&1 \
+  || gcloud firestore databases create --database='(default)' --project="$PROJECT_ID" \
+       --location="${FIRESTORE_LOCATION:-nam5}" --type=firestore-native --quiet
 
 cat <<MSG
 

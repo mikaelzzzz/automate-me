@@ -23,6 +23,7 @@ import (
 
 	"automate-me/app/internal/agents"
 	"automate-me/app/internal/briefing"
+	"automate-me/app/internal/fsession"
 	"automate-me/app/internal/httpapi"
 	"automate-me/app/internal/proposer"
 	"automate-me/app/internal/shopping"
@@ -98,9 +99,24 @@ func main() {
 		Blocks:   blocks,
 		Events:   events,
 	}
+	// Sessions: Firestore when configured, so a conversation survives the
+	// revision that hosted it; in-memory otherwise.
+	sessions := session.InMemoryService()
+	sessionStore := "memory"
+	if project := os.Getenv("FIRESTORE_PROJECT"); project != "" {
+		fs, err := fsession.New(ctx, project, os.Getenv("FIRESTORE_DATABASE"), os.Getenv("FIRESTORE_PREFIX"))
+		if err != nil {
+			log.Fatalf("firestore sessions: %v", err)
+		}
+		defer fs.Close()
+		sessions = fs
+		sessionStore = "firestore:" + project
+	}
+	slog.Info("agent sessions", "store", sessionStore)
+
 	// Build the graph first: the voice tools delegate into it, so it has to
 	// exist before the live tool set is frozen.
-	consult, err := mountChat(ctx, mux, deps)
+	consult, err := mountChat(ctx, mux, deps, sessions)
 	if err != nil {
 		// Dashboard + consent must come up even without a model key.
 		slog.Warn("chat API disabled (no model?)", "err", err)
@@ -164,7 +180,7 @@ func graphModel() string { return cmp.Or(os.Getenv("GEMINI_MODEL"), "gemini-3.5-
 // mountChat builds the agent graph, serves it over adkrest for the typed chat,
 // and returns a closure that runs the same graph one question at a time — the
 // voice session's route into Gemini 3.5 Flash.
-func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps) (
+func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps, sessions session.Service) (
 	func(context.Context, string, string) (agents.Consultation, error), error,
 ) {
 	model := graphModel()
@@ -176,7 +192,6 @@ func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps) (
 	if err != nil {
 		return nil, err
 	}
-	sessions := session.InMemoryService()
 	srv, err := adkrest.NewServer(adkrest.ServerConfig{
 		AgentLoader:     agent.NewSingleLoader(root),
 		SessionService:  sessions,
@@ -190,7 +205,7 @@ func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps) (
 	r, err := runner.New(runner.Config{
 		AppName:           "automate_me_live",
 		Agent:             root,
-		SessionService:    session.InMemoryService(),
+		SessionService:    sessions,
 		AutoCreateSession: true,
 	})
 	if err != nil {
