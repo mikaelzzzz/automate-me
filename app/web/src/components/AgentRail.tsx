@@ -335,15 +335,23 @@ export function AgentRail({
     [send, push],
   )
 
+  // Size the composer to what it holds — including the placeholder, which
+  // wraps to two lines in a 348px rail and used to be cut in half by the
+  // one-row height. scrollHeight reflects the placeholder when the field is
+  // empty, so the same measurement covers both states.
   useEffect(() => {
     const el = textarea.current
     if (!el) return
-    if (!input) {
-      el.style.height = ''
-      return
+    const fit = () => {
+      el.style.height = '0px'
+      el.style.height = Math.min(el.scrollHeight, 112) + 'px'
     }
-    el.style.height = '0px'
-    el.style.height = Math.min(el.scrollHeight, 112) + 'px'
+    fit()
+    // A narrower rail rewraps the text under the composer's feet, so measure
+    // again whenever the field itself changes width.
+    const ro = new ResizeObserver(fit)
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [input])
 
   const approvedExecutable = proposals.find((p) => p.status === 'approved' && p.executable)
@@ -516,8 +524,8 @@ export function AgentRail({
                 void send(input)
               }
             }}
-            placeholder="Ask or describe a routine"
-            className="flex-1 resize-none bg-transparent px-1 py-2 text-sm outline-none leading-5 placeholder:text-ink-tertiary"
+            placeholder="Describe a routine…"
+            className="flex-1 min-w-0 resize-none bg-transparent px-1 py-2 text-sm outline-none leading-5 placeholder:text-ink-tertiary"
           />
           {busy ? (
             <button
