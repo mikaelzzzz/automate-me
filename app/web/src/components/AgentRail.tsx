@@ -65,6 +65,16 @@ type NewItem = DistributiveOmit<Item, 'id'>
 let seq = 1
 const nextId = () => seq++
 
+// The Product Scout answers with real store links. They open in a new tab, so
+// following one never throws away the conversation that produced it.
+const MD = {
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a href={href} target="_blank" rel="noreferrer noopener" className="text-gold-deep underline underline-offset-2 hover:text-teal">
+      {children}
+    </a>
+  ),
+}
+
 function activityLabel(call: FunctionCall): string {
   const a = call.args ?? {}
   switch (call.name) {
@@ -622,7 +632,7 @@ function Row({
             </div>
           )}
           <div className="bg-surface border border-line rounded-2xl rounded-bl-md px-3.5 py-2.5 text-sm chat-md">
-            <Markdown>{item.text}</Markdown>
+            <Markdown components={MD}>{item.text}</Markdown>
             {item.streaming && <span className="cursor" aria-hidden />}
           </div>
         </div>

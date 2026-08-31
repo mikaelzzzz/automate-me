@@ -15,6 +15,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
+	"google.golang.org/adk/v2/tool/geminitool"
 	"google.golang.org/adk/v2/tool/loadmemorytool"
 	"google.golang.org/adk/v2/tool/preloadmemorytool"
 	"google.golang.org/genai"
@@ -383,6 +384,32 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 		return nil, err
 	}
 
+	// The product scout is the only agent with Google Search, and Search is its
+	// only tool. Gemini's built-in search runs inside the model, and mixing it
+	// with function declarations in one request is what the API refuses — a
+	// dedicated sub-agent keeps the orchestrator's tools untouched and gives
+	// grounded answers a single, auditable home.
+	scout, err := llmagent.New(llmagent.Config{
+		Name:        "product_scout",
+		Description: "Searches the live web for real products the user could buy: what exists, what it costs today, and where to get it. The only agent with Google Search.",
+		Model:       llm,
+		Instruction: "You find real things to buy, on the open web, right now. Search before you answer — never from memory, because prices and stock change. Give 2 to 4 options, each on its own line: the product name, the store, the price as the page states it, and the link as a markdown link. Prefer Brazilian retailers and prices in BRL when the user is shopping from Brazil. Say plainly when you could not confirm a price or when a page may be out of date; a wrong price is worse than an absent one. Never invent a URL, a price or a store. Close with one sentence on which option you would take and why, in terms of the user's time — this is Automate.me, so an option that removes a recurring chore beats a cheaper one that does not. If what they want is a recurring cost rather than a purchase, say so." + style,
+		Tools:       []tool.Tool{geminitool.GoogleSearch{}},
+		// Search runs inside the model, and ADK still hands this agent a
+		// transfer_to_agent function to get back to the orchestrator. The API
+		// refuses that mix — "Please enable
+		// tool_config.include_server_side_tool_invocations to use Built-in
+		// tools with Function calling" — unless the server-side invocations
+		// are made visible in the response, which is also what lets the UI show
+		// that a search actually happened.
+		GenerateContentConfig: &genai.GenerateContentConfig{
+			ToolConfig: &genai.ToolConfig{IncludeServerSideToolInvocations: genai.Ptr(true)},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	planner, err := llmagent.New(llmagent.Config{
 		Name:        "day_planner",
 		Description: "Builds and narrates the Daily Briefing: when to leave for each appointment, what traffic costs, weather and what to wear, flood risk on the route, and writes departure blocks to the calendar.",
@@ -405,7 +432,7 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 	// to a sub-agent first is how the fact gets lost: it once answered "I have
 	// updated your hourly rate" without ever calling the tool.
 	rootTools := []tool.Tool{getProf, setProf}
-	instruction := "You are Automate.me. Goal: find where the user leaks time, price it in BRL, and automate the worst leaks. Delegate routine capture (text or photos of lists, calendars, boletos, notes) to routine_analyst, recommendations to automation_advisor, and anything about today's/tomorrow's schedule, commute, departure times, traffic, weather or floods to day_planner. Be concise and concrete; lead with numbers the tools return. Everything monetary comes from tools, never from you. When the user tells you what their hour is worth, what they earn, how many hours they work, where they live or where they work — call set_profile yourself, in that same turn, and quote back what the tool returned. Never say you saved, updated or remembered something unless a tool call did it."
+	instruction := "You are Automate.me. Goal: find where the user leaks time, price it in BRL, and automate the worst leaks. Delegate routine capture (text or photos of lists, calendars, boletos, notes) to routine_analyst, recommendations to automation_advisor, anything about today's/tomorrow's schedule, commute, departure times, traffic, weather or floods to day_planner, and anything that needs the live web — what a product costs, where to buy it, which model to get, a link — to product_scout. Never answer a shopping question from memory and never write a URL yourself: product_scout searches, you relay what it found. Be concise and concrete; lead with numbers the tools return. Everything monetary comes from tools, never from you. When the user tells you what their hour is worth, what they earn, how many hours they work, where they live or where they work — call set_profile yourself, in that same turn, and quote back what the tool returned. Never say you saved, updated or remembered something unless a tool call did it."
 	if d.Memory != nil {
 		memTools = []tool.Tool{preloadmemorytool.New(), loadmemorytool.New()}
 		afterRun = []agent.AfterAgentCallback{d.rememberTurn}
@@ -417,7 +444,7 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 		Description:         "Automate.me orchestrator: finds where the user's life leaks time, prices it, and coordinates automation.",
 		Model:               llm,
 		Instruction:         instruction + style,
-		SubAgents:           []agent.Agent{analyst, advisor, planner},
+		SubAgents:           []agent.Agent{analyst, advisor, planner, scout},
 		Tools:               append(rootTools, memTools...),
 		AfterAgentCallbacks: afterRun,
 	})

@@ -403,6 +403,30 @@ func (d Deps) LiveTools() map[string]LiveTool {
 				return d.Consult(ctx, uid, in.Question)
 			},
 		},
+		"find_products": {
+			Declaration: map[string]any{
+				"name":        "find_products",
+				"description": "Search the live web for something the user wants to buy and come back with real options: product, store, current price and a link. Use it whenever they ask what to buy, what something costs, or where to get it — you have no product knowledge of your own and prices change. Read the options out loud; the links appear on their screen.",
+				"parameters": obj(map[string]any{
+					"need": prop("string", "What they want, in their words, with the constraints they gave: budget, brand, size, whether it is for a routine you already priced"),
+				}, "need"),
+			},
+			Invoke: func(ctx context.Context, uid string, a json.RawMessage) (any, error) {
+				in, err := decode[findProductsIn](a)
+				if err != nil {
+					return nil, err
+				}
+				if d.Consult == nil {
+					return nil, fmt.Errorf("the specialist graph is not available on this server")
+				}
+				if strings.TrimSpace(in.Need) == "" {
+					return nil, fmt.Errorf("need is required")
+				}
+				// Straight to the scout: it is the only agent with Google Search,
+				// and naming it keeps the orchestrator from answering from memory.
+				return d.Consult(ctx, uid, "Ask product_scout to search the web and find products for this, with current prices and links: "+in.Need)
+			},
+		},
 		"get_life_pnl": {
 			Declaration: map[string]any{
 				"name":        "get_life_pnl",
@@ -529,6 +553,7 @@ func (d Deps) LiveTools() map[string]LiveTool {
 	// offer the model something it cannot use.
 	if d.Consult == nil {
 		delete(tools, "consult_specialist")
+		delete(tools, "find_products")
 	}
 	return tools
 }
@@ -537,10 +562,14 @@ type consultIn struct {
 	Question string `json:"question"`
 }
 
+type findProductsIn struct {
+	Need string `json:"need"`
+}
+
 // LiveToolOrder fixes the order the declarations are sent in, so the model
 // sees the read-only tools before the ones that change something.
 var LiveToolOrder = []string{
-	"consult_specialist", "get_profile", "get_life_pnl", "get_daily_briefing", "add_routine_task",
+	"consult_specialist", "find_products", "get_profile", "get_life_pnl", "get_daily_briefing", "add_routine_task",
 	"set_profile", "propose_automations", "plan_my_day", "approve_proposal", "write_departure_blocks",
 }
 
@@ -556,6 +585,7 @@ Rules that do not bend:
 - You may record an approval by voice, but you can never buy anything. Purchases are signed by the user on the consent screen. Say so plainly when a proposal is a purchase.
 - Call get_life_pnl before you talk about their overall numbers, and get_daily_briefing before you talk about their day.
 - Never invent an identifier. Before approving anything, call propose_automations so you are holding a real proposal_id.
+- You cannot browse and you know nothing about products, prices or stock. Anything to buy — "where do I get one", "how much is it", "which model", a link — goes to find_products, which searches the live web through the Product Scout. Read the options out loud: product, store, price. Say the links are on their screen; never spell a URL out loud, and never invent one.
 - You are the voice, not the brain. Anything that needs judgement — what to automate and why, how to set something up, comparing options, explaining a number, or a question you are unsure how to answer — goes to consult_specialist, which reasons on Gemini 3.5 Flash across the Routine Analyst, the Automation Advisor and the Day Planner. Say their answer in your own words, out loud and short. Use the direct tools only for a plain lookup or to carry out something the user just asked for.
 
 How to speak: this is a conversation, not a report. Short sentences. Lead with the number that matters. No markdown, no bullet lists, no reading identifiers out loud. Under 60 words unless they ask for detail. Match the user's language.`

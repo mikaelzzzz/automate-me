@@ -205,6 +205,7 @@ export const AGENTS: Record<string, { label: string; color: string; role: string
   routine_analyst: { label: 'Routine Analyst', color: '#a07c12', role: 'captures & prices your routine' },
   automation_advisor: { label: 'Automation Advisor', color: '#2c5fa8', role: 'ranks automations by payback' },
   day_planner: { label: 'Day Planner', color: '#2e7d32', role: 'routes, traffic cost, weather, floods' },
+  product_scout: { label: 'Product Scout', color: '#bc9a75', role: 'searches the live web for what to buy' },
 }
 
 export function agentMeta(author: string) {

@@ -11,6 +11,11 @@ type Turn =
   | { id: number; kind: 'you'; text: string; open: boolean }
   | { id: number; kind: 'agent'; text: string; open: boolean }
   | { id: number; kind: 'tool'; tool: string; status: 'running' | 'done' | 'error'; detail?: string; via?: string[]; model?: string }
+  | { id: number; kind: 'links'; products: Product[] }
+
+// A voice call cannot hand you a URL. When the Product Scout comes back with
+// real listings, the links land on screen instead of being read out loud.
+type Product = { label: string; url: string }
 
 let seq = 1
 
@@ -19,6 +24,25 @@ const AGENT_LABEL: Record<string, string> = {
   routine_analyst: 'Routine Analyst',
   automation_advisor: 'Automation Advisor',
   day_planner: 'Day Planner',
+  product_scout: 'Product Scout',
+}
+
+// The scout answers in markdown: one product per line, the store as a link.
+// Pull the links out so a spoken answer still leaves something clickable.
+function productsFrom(answer: string): Product[] {
+  const out: Product[] = []
+  for (const line of answer.split('\n')) {
+    const link = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/.exec(line)
+    if (!link) continue
+    const label = line
+      .replace(/\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/[*_`]/g, '')
+      .replace(/^[-•\s]+/, '')
+      .replace(/[-–·,\s]+$/, '')
+      .trim()
+    out.push({ label: label || link[1], url: link[2] })
+  }
+  return out.slice(0, 5)
 }
 
 const TOOL_LABEL: Record<string, string> = {
@@ -29,6 +53,9 @@ const TOOL_LABEL: Record<string, string> = {
   approve_proposal: 'Recording your approval',
   plan_my_day: 'Planning the day · routes, weather, floods',
   get_daily_briefing: 'Reading today’s briefing',
+  find_products: 'Searching the web for what to buy',
+  get_profile: 'Reading what it knows about you',
+  set_profile: 'Saving what you just told it',
   write_departure_blocks: 'Writing “Leave at” blocks to the calendar',
 }
 
@@ -99,6 +126,10 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
           const r = (ev.result ?? {}) as Record<string, unknown>
           const via = Array.isArray(r['handled_by']) ? (r['handled_by'] as string[]) : undefined
           setTurns((xs) => markTool(xs, ev.tool ?? '', 'done', undefined, via, r['reasoned_with'] as string))
+          if (ev.tool === 'find_products' && typeof r['answer'] === 'string') {
+            const products = productsFrom(r['answer'] as string)
+            if (products.length > 0) setTurns((xs) => [...xs, { id: seq++, kind: 'links', products }])
+          }
           onDataChanged()
           break
         }
@@ -328,6 +359,30 @@ function markTool(
 }
 
 function TurnRow({ t, onGo }: { t: Turn; onGo: (s: Screen) => void }) {
+  if (t.kind === 'links') {
+    return (
+      <div className="chat-item">
+        <div className="bg-surface border border-line rounded-2xl rounded-bl-md overflow-hidden max-w-[76%]">
+          <div className="scap px-4 pt-3 pb-1">found on the web</div>
+          <ul className="m-0 list-none p-0">
+            {t.products.map((p) => (
+              <li key={p.url} className="border-t border-[rgba(19,53,63,0.06)] first:border-0">
+                <a
+                  href={p.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="flex items-center gap-2 px-4 py-2.5 text-sm hover:bg-gold-tint/40 transition-colors"
+                >
+                  <span className="min-w-0 flex-1">{p.label}</span>
+                  <span className="text-gold-deep shrink-0 text-xs">open →</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    )
+  }
   if (t.kind === 'tool') {
     const done = t.status === 'done'
     const failed = t.status === 'error'
