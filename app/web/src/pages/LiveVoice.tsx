@@ -183,7 +183,7 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
           <div>
             <p className="scap m-0">
-              Live · voice <b className="font-semibold">{models.voice}</b> · reasoning{' '}
+              <b className="font-semibold">Live Voice</b> · reasoning{' '}
               <b className="font-semibold">{models.reasoning}</b>
             </p>
             <h1 className="display m-0 mt-1 leading-none" style={{ fontSize: 'clamp(1.5rem, 2.4vw, 1.95rem)', fontWeight: 600 }}>
