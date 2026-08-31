@@ -62,17 +62,18 @@ anything: a purchase still has to be signed on the consent screen.
 
 ```mermaid
 flowchart LR
-    U(["👤 User<br/>chat · photo · consent"])
+    U(["👤 User<br/>chat · photo · voice · consent"])
 
     subgraph APP["☁️ Cloud Run · automate-me — public"]
         direction TB
-        SPA["React SPA<br/><small>dashboard · agent panel · briefing · ledger</small>"]
+        SPA["React SPA<br/><small>dashboard · agent panel · agenda · briefing · Talk</small>"]
         ADK["adkrest <code>/api</code><br/><small>/run_sse — streamed events</small>"]
-        REST["REST API <code>/app/api</code><br/><small>P&L · proposals · ledger · mandates · briefing</small>"]
+        REST["REST API <code>/app/api</code><br/><small>P&L · proposals · ledger · mandates · agenda · briefing</small>"]
+        LIVE["live endpoints <code>/app/api/live</code><br/><small>ephemeral token · tool · remember</small>"]
 
         subgraph GRAPH["ADK agent graph · gemini-3.5-flash"]
             direction TB
-            ORCH(["automate_me — orchestrator"])
+            ORCH(["automate_me — orchestrator<br/><small>preload_memory · load_memory</small>"])
             RA["routine_analyst<br/><small>interview · vision</small>"]
             AA["automation_advisor<br/><small>catalog · payback</small>"]
             DP["day_planner<br/><small>routes · weather · floods</small>"]
@@ -83,15 +84,18 @@ flowchart LR
             direction TB
             ENG["Value Engine<br/><small>int64 centavos · table-driven tests</small>"]
             BR["Briefing builder<br/><small>errgroup · 1 worker per appointment</small>"]
+            CALR["Calendar reader<br/><small>trip · remote · no-place · ignored</small>"]
             TS["Trusted Surface<br/><small>holds the user's P-256 key</small>"]
         end
 
         ST[("Store<br/><small>memory · seeded demo</small>")]
 
-        SPA --> ADK & REST
+        SPA --> ADK & REST & LIVE
         ADK --> ORCH
+        LIVE -->|"consult_specialist"| ORCH
         RA & AA --> ENG
         DP --> BR
+        BR --> CALR
         REST --> TS & BR
         GRAPH --> ST
         REST --> ST
@@ -106,6 +110,10 @@ flowchart LR
     subgraph GCP["Google Cloud"]
         direction TB
         GEM["Gemini 3.5 Flash"]
+        LIVEAPI["Gemini Live 3.1<br/><small>conversational audio</small>"]
+        MEM[("Agent Engine · Memory Bank<br/><small>facts per user_id</small>")]
+        FS[("Firestore<br/><small>ADK sessions · events · state</small>")]
+        CAL["Google Calendar<br/><small>reads the day · writes departure blocks</small>"]
         MAPS["Maps Platform<br/><small>Routes · Weather</small>"]
         SEC["Secret Manager<br/><small>google-api-key · maps-api-key</small>"]
         SCHED["Cloud Scheduler<br/><small>06:00 America/Sao_Paulo</small>"]
@@ -114,8 +122,14 @@ flowchart LR
     GEO[/"GeoSampa flood layer<br/><small>192 Civil-Defence points, embedded</small>"/]
 
     U --> SPA
+    U ==>|"🎙️ audio · WebSocket with a single-use token"| LIVEAPI
+    LIVEAPI -.->|"function calls"| LIVE
     GRAPH --> GEM
+    ORCH <-->|"sessions survive the revision"| FS
+    ORCH <-->|"recall · remember the turn"| MEM
+    LIVE <-->|"recall before the first word · store the call"| MEM
     BR --> MAPS
+    CALR <--> CAL
     BR -.reads.-> GEO
     TS ==>|"AP2 over HTTP · Google ID token"| RAIL
     SCHED -->|"POST /briefing/run"| REST
@@ -124,8 +138,10 @@ flowchart LR
 
     classDef det fill:#F5E6AD,stroke:#A07C12,stroke-width:2px
     classDef ext fill:#FFFFFF,stroke:#B9B4A7,stroke-dasharray:3 3
-    class ENG,BR,TS det
-    class GEM,MAPS,SEC,SCHED,GEO ext
+    classDef mem fill:#F0E7D9,stroke:#BC9A75,stroke-width:2px
+    class ENG,BR,CALR,TS det
+    class GEM,LIVEAPI,MAPS,SEC,SCHED,GEO,CAL ext
+    class MEM,FS mem
 ```
 
 
