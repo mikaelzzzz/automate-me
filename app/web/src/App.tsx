@@ -45,16 +45,6 @@ const RAIL: { id: Screen; label: string; icon: ReactNode }[] = [
   },
   { id: 'proposals', label: 'Proposals', icon: <path d="M13 2 4.5 13H11l-1 9 8.5-11H12l1-9z" /> },
   { id: 'ledger', label: 'Ledger', icon: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /> },
-  {
-    id: 'teams',
-    label: 'Teams',
-    icon: (
-      <>
-        <circle cx="9" cy="8" r="3.2" />
-        <path d="M2.5 20a6.5 6.5 0 0 1 13 0M16.5 5.2a3.2 3.2 0 0 1 0 5.9M18 20a6.6 6.6 0 0 0-2.2-4.9" />
-      </>
-    ),
-  },
   { id: 'guardian', label: 'Guardian', icon: <path d="M12 2.5 20 6v6c0 5-3.4 8.4-8 9.5-4.6-1.1-8-4.5-8-9.5V6l8-3.5z" /> },
 ]
 
@@ -205,12 +195,6 @@ export default function App() {
         {screen === 'proposals' && <ProposalsView proposals={proposals} onBuy={setConsentFor} onAsk={askAgent} onGo={go} />}
         {screen === 'briefing' && <BriefingView onAsk={askAgent} version={version} />}
         {screen === 'ledger' && <LedgerView entries={ledger} onAsk={askAgent} />}
-        {screen === 'teams' && (
-          <Soon
-            title="Team automation report"
-            line="Paste your team's manual tasks and get a shareable report: hours lost, what it costs, and what to automate first. The same report page the Guardian will use for progress."
-          />
-        )}
         {screen === 'guardian' && (
           <Soon
             title="Plan Guardian"

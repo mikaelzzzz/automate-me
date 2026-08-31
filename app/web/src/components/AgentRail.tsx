@@ -16,7 +16,7 @@ import type { Activity } from '../lib/activity'
 // Derived activity seeds the timeline; live tool calls, hand-overs and
 // actionable result cards append to the same column as you converse.
 
-export type Screen = 'pnl' | 'live' | 'briefing' | 'proposals' | 'ledger' | 'teams' | 'guardian'
+export type Screen = 'pnl' | 'live' | 'briefing' | 'proposals' | 'ledger' | 'guardian'
 
 export interface AgentHandle {
   send: (text: string) => void
@@ -53,7 +53,7 @@ type Item =
   | { id: number; kind: 'activity'; label: string; status: 'running' | 'done'; tool: string; callId?: string }
   | { id: number; kind: 'task'; name: string; cost: string; updated: boolean }
   | { id: number; kind: 'proposals'; rows: ProposalRow[] }
-  | { id: number; kind: 'approved'; proposalId: string }
+  | { id: number; kind: 'approved'; proposalId: string; purchased?: boolean; total?: string }
   | { id: number; kind: 'briefing'; day: string; rows: BriefingRow[] }
   | { id: number; kind: 'purchase'; title: string; total: number; mandateRef: string }
   | { id: number; kind: 'confirm'; pending: PendingConfirmation }
@@ -233,7 +233,14 @@ export function AgentRail({
           } else if (name === 'propose_automations' && Array.isArray(res['proposals'])) {
             push({ kind: 'proposals', rows: res['proposals'] as ProposalRow[] })
           } else if (name === 'approve_proposal' && res['status'] === 'approved') {
-            push({ kind: 'approved', proposalId: String(args['proposal_id'] ?? '') })
+            push({
+              kind: 'approved',
+              proposalId: String(args['proposal_id'] ?? ''),
+              // Under the signed envelope the agent already bought it; asking
+              // for a signature now would ask twice for one purchase.
+              purchased: !!res['purchased_autonomously'],
+              total: typeof res['purchase_total'] === 'string' ? res['purchase_total'] : undefined,
+            })
           } else if (
             (name === 'plan_my_day' || name === 'get_daily_briefing') &&
             Array.isArray(res['cards']) &&
@@ -701,7 +708,7 @@ function Row({
     case 'approved': {
       const p = proposals.find((x) => x.id === item.proposalId)
       const title = p?.recipe_title ?? item.proposalId
-      const done = p?.status === 'executed'
+      const done = item.purchased || p?.status === 'executed'
       return (
         <Card tag="approved" tone="gold">
           <div className="flex items-center gap-3">
@@ -709,7 +716,9 @@ function Row({
               <div className="text-sm font-medium truncate">{title}</div>
               <div className="text-xs text-ink-secondary">
                 {done
-                  ? 'Purchased via AP2 — receipts on the ledger.'
+                  ? item.purchased
+                    ? `Bought for ${item.total ?? 'the authorized amount'} under your spending authorization — signed receipt on the ledger.`
+                    : 'Purchased via AP2 — receipts on the ledger.'
                   : p?.executable
                     ? 'The agent cannot sign payments. You do, on the consent screen.'
                     : 'Guided recipe — ask for the steps.'}
