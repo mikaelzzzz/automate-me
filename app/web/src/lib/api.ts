@@ -99,6 +99,30 @@ export interface BriefingCard {
   calendar_block_mode?: 'simulated' | 'google'
 }
 
+// One row of the day exactly as the calendar has it. The briefing prices the
+// trips; the agenda shows everything, and says why the rest was not priced.
+export interface AgendaEntry {
+  id: string
+  summary: string
+  start: string
+  end: string
+  kind: 'trip' | 'remote' | 'no_place' | 'ignored'
+  location?: string
+  reason?: string
+}
+
+export interface Agenda {
+  day: string
+  source: string
+  available: boolean
+  note: string
+  trips: number
+  remote: number
+  no_place: number
+  skipped: number
+  entries: AgendaEntry[]
+}
+
 export interface Briefing {
   day: string
   cards: BriefingCard[]
@@ -143,6 +167,7 @@ export const api = {
     }).then((r) => j<ConsentResult>(r)),
   ledger: () => fetch('/app/api/ledger').then((r) => j<LedgerEntry[]>(r)),
   mandates: () => fetch('/app/api/mandates').then((r) => j<MandateRecord[]>(r)),
+  agenda: () => fetch('/app/api/agenda').then((r) => j<Agenda>(r)),
   briefing: () => fetch('/app/api/briefing').then((r) => j<Briefing>(r)),
   runBriefing: () => fetch('/app/api/briefing/run', { method: 'POST' }).then((r) => j<Briefing>(r)),
   writeBlock: (cardId: string) =>

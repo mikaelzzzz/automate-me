@@ -38,6 +38,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /app/api/trusted/consent", h.consent)
 	mux.HandleFunc("GET /app/api/ledger", h.ledger)
 	mux.HandleFunc("GET /app/api/mandates", h.mandates)
+	mux.HandleFunc("GET /app/api/agenda", h.agenda)
 	mux.HandleFunc("GET /app/api/briefing", h.briefing)
 	mux.HandleFunc("POST /app/api/briefing/run", h.runBriefing)
 	mux.HandleFunc("POST /app/api/briefing/{id}/block", h.briefingBlock)
@@ -52,6 +53,49 @@ type briefingResponse struct {
 	// Note states the shape of the day the cards came from — how many
 	// appointments were remote, unplaced or ignored.
 	Note string `json:"note,omitempty"`
+}
+
+// agendaResponse is the day as the calendar has it — every row, not only the
+// ones worth a route. The SPA shows this above the briefing cards so the user
+// reads their own day, and sees exactly why a row was or was not priced.
+type agendaResponse struct {
+	Day       string           `json:"day"`
+	Source    string           `json:"source"`
+	Available bool             `json:"available"`
+	Note      string           `json:"note"`
+	Trips     int              `json:"trips"`
+	Remote    int              `json:"remote"`
+	NoPlace   int              `json:"no_place"`
+	Skipped   int              `json:"skipped"`
+	Entries   []briefing.Entry `json:"entries"`
+}
+
+// agenda reads the connected calendar (or the seeded day) for the day being
+// briefed. Read-only: it never writes and never costs a Routes call.
+func (h *Handler) agenda(w http.ResponseWriter, r *http.Request) {
+	if h.Briefing == nil {
+		writeJSON(w, http.StatusOK, agendaResponse{Available: false, Entries: []briefing.Entry{}})
+		return
+	}
+	day := h.Briefing.DayFor(h.Briefing.Now())
+	sched, err := h.Briefing.Schedule(r.Context(), h.Events, day)
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	source := "seed"
+	if h.Events != nil {
+		source = h.Events.SourceLabel()
+	}
+	entries := sched.Entries
+	if entries == nil {
+		entries = []briefing.Entry{}
+	}
+	writeJSON(w, http.StatusOK, agendaResponse{
+		Day: h.Briefing.DayKey(day), Source: source, Available: true, Note: sched.Note,
+		Trips: len(sched.Events), Remote: sched.Remote, NoPlace: sched.NoPlace, Skipped: sched.Skipped,
+		Entries: entries,
+	})
 }
 
 func (h *Handler) briefing(w http.ResponseWriter, r *http.Request) {

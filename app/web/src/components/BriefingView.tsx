@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Briefing, BriefingCard } from '../lib/api'
+import type { Agenda, AgendaEntry, Briefing, BriefingCard } from '../lib/api'
 import { api, brl } from '../lib/api'
 
 // Daily Briefing: one card per appointment, built unprompted by the day
@@ -7,10 +7,17 @@ import { api, brl } from '../lib/api'
 // the route crosses ground that floods. Numbers are measured, not guessed.
 export function BriefingView({ onAsk, version }: { onAsk: (text: string) => void; version: number }) {
   const [data, setData] = useState<Briefing | null>(null)
+  const [agenda, setAgenda] = useState<Agenda | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
 
-  const load = () => api.briefing().then(setData).catch((e) => setError(String(e)))
+  const load = () =>
+    Promise.all([
+      api.briefing().then(setData),
+      // The agenda is read-only and never costs a route call, so a failure
+      // here must not take the briefing down with it.
+      api.agenda().then(setAgenda).catch(() => setAgenda(null)),
+    ]).catch((e) => setError(String(e)))
   useEffect(() => {
     void load()
   }, [version])
@@ -20,6 +27,7 @@ export function BriefingView({ onAsk, version }: { onAsk: (text: string) => void
     setError('')
     try {
       setData(await api.runBriefing())
+      await api.agenda().then(setAgenda).catch(() => {})
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -91,6 +99,8 @@ export function BriefingView({ onAsk, version }: { onAsk: (text: string) => void
 
       {error && <div className="bg-alert-tint text-alert rounded-xl px-4 py-3 text-sm">{error}</div>}
 
+      {agenda && agenda.entries.length > 0 && <AgendaPanel a={agenda} />}
+
       {data.cards.length === 0 && !running && (
         data.note
           ? <Empty title={`No trip to price ${when}`} line={data.note} />
@@ -112,6 +122,78 @@ export function BriefingView({ onAsk, version }: { onAsk: (text: string) => void
         </p>
       )}
     </div>
+  )
+}
+
+// AgendaPanel is the day itself: every appointment the calendar holds, in
+// order, with the reason each one is or is not a trip the agent can price.
+function AgendaPanel({ a }: { a: Agenda }) {
+  const [open, setOpen] = useState(true)
+  const real = a.source.startsWith('google:')
+  const counts = [
+    a.trips > 0 && `${a.trips} to travel to`,
+    a.remote > 0 && `${a.remote} remote`,
+    a.no_place > 0 && `${a.no_place} without an address`,
+    a.skipped > 0 && `${a.skipped} ignored`,
+  ].filter(Boolean) as string[]
+
+  return (
+    <section className="bg-surface rounded-card hairline shadow-[var(--shadow-lift)] overflow-hidden rise">
+      <header className="flex flex-wrap items-center gap-3 px-5 py-3.5 border-b border-[rgba(19,53,63,0.08)]">
+        <div className="min-w-0 flex-1">
+          <h2 className="m-0 text-base font-medium">Your day</h2>
+          <p className="text-ink-tertiary text-xs mt-0.5 mb-0">
+            {a.entries.length} appointment{a.entries.length === 1 ? '' : 's'}
+            {counts.length > 0 && <> · {counts.join(' · ')}</>}
+          </p>
+        </div>
+        <span
+          className="text-[11px] rounded-pill px-2.5 py-1 shrink-0"
+          style={real ? { background: '#F0E7D9', color: '#8B6B47' } : { background: 'rgba(19,53,63,0.05)', color: '#615f5b' }}
+          title={a.source}
+        >
+          {real ? 'live Google Calendar' : 'seeded day'}
+        </span>
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="rounded-pill border-subtle bg-paper text-xs px-3 py-1.5 cursor-pointer hover:bg-gold-tint/40 transition-colors"
+        >
+          {open ? 'Hide' : 'Show'}
+        </button>
+      </header>
+
+      {open && (
+        <ul className="m-0 list-none p-0 max-h-[420px] overflow-y-auto">
+          {a.entries.map((e) => (
+            <AgendaRow key={e.id + e.start} e={e} />
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function AgendaRow({ e }: { e: AgendaEntry }) {
+  const hhmm = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const style = {
+    trip: { label: 'trip', bg: '#F0E7D9', color: '#8B6B47' },
+    remote: { label: 'remote', bg: 'rgba(44,95,168,0.10)', color: '#2C5FA8' },
+    no_place: { label: 'no address', bg: 'rgba(19,53,63,0.05)', color: '#615f5b' },
+    ignored: { label: 'ignored', bg: 'transparent', color: '#9a9791' },
+  }[e.kind]
+  return (
+    <li className="flex items-baseline gap-3 px-5 py-2.5 border-b border-[rgba(19,53,63,0.05)] last:border-0">
+      <span className="tabular text-xs text-ink-tertiary w-[86px] shrink-0">
+        {hhmm(e.start)}–{hhmm(e.end)}
+      </span>
+      <span className={`min-w-0 flex-1 text-sm truncate ${e.kind === 'ignored' ? 'text-ink-tertiary' : ''}`} title={e.location || e.summary}>
+        {e.summary || 'Untitled'}
+      </span>
+      {e.reason && <span className="text-[11px] text-ink-tertiary hidden md:inline truncate max-w-[220px]">{e.reason}</span>}
+      <span className="text-[11px] rounded-pill px-2 py-0.5 shrink-0" style={{ background: style.bg, color: style.color }}>
+        {style.label}
+      </span>
+    </li>
   )
 }
 

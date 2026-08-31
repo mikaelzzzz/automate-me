@@ -83,8 +83,9 @@ func (g *GoogleCalendar) EventsFor(ctx context.Context, day time.Time) (DaySched
 	return g.classify(raw), nil
 }
 
-// classify turns raw calendar events into a DaySchedule. Pure given its
-// input — the API call is the only thing above it.
+// classify turns raw calendar events into a DaySchedule: every row of the day
+// kept as an Entry, and the subset worth a route call as Events. Pure given
+// its input — the API call is the only thing above it.
 func (g *GoogleCalendar) classify(raw []*calendar.Event) DaySchedule {
 	type dated struct {
 		ev    *calendar.Event
@@ -104,10 +105,6 @@ func (g *GoogleCalendar) classify(raw []*calendar.Event) DaySchedule {
 			continue
 		}
 		total++
-		if skipEvent(ev) {
-			day.Skipped++
-			continue
-		}
 		end := start.Add(time.Hour)
 		if ev.End != nil && ev.End.DateTime != "" {
 			if e, err := time.Parse(time.RFC3339, ev.End.DateTime); err == nil {
@@ -122,18 +119,36 @@ func (g *GoogleCalendar) classify(raw []*calendar.Event) DaySchedule {
 	var lastEnd time.Time
 	missingHome := false
 	for _, it := range items {
-		loc := strings.TrimSpace(it.ev.Location)
+		entry := Entry{
+			ID: eventKey(it.ev), Summary: strings.TrimSpace(it.ev.Summary),
+			Start: it.start, End: it.end, Location: strings.TrimSpace(it.ev.Location),
+		}
+		if reason := skipReason(it.ev); reason != "" {
+			day.Skipped++
+			entry.Kind, entry.Reason = KindIgnored, reason
+			entry.Location = ""
+			day.Entries = append(day.Entries, entry)
+			continue
+		}
+		loc := entry.Location
 		switch {
 		case it.ev.ConferenceData != nil || it.ev.HangoutLink != "" || isRemoteLocation(loc):
 			day.Remote++
+			entry.Kind, entry.Reason = KindRemote, "meeting link, not a place"
+			day.Entries = append(day.Entries, entry)
 			continue
 		case loc == "":
 			day.NoPlace++
+			entry.Kind, entry.Reason = KindNoPlace, "no location on the event"
+			day.Entries = append(day.Entries, entry)
 			continue
 		}
 		// Same place as the appointment before it: no trip between them.
 		if strings.EqualFold(loc, lastPlace) {
 			lastEnd = it.end
+			entry.Kind, entry.Reason = KindNoPlace, "same place as the appointment before it"
+			day.NoPlace++
+			day.Entries = append(day.Entries, entry)
 			continue
 		}
 		origin := g.Home
@@ -145,46 +160,58 @@ func (g *GoogleCalendar) classify(raw []*calendar.Event) DaySchedule {
 		if origin == "" {
 			missingHome = true
 			day.NoPlace++
+			entry.Kind, entry.Reason = KindNoPlace, "no origin to route from (set HOME_ADDRESS)"
+			day.Entries = append(day.Entries, entry)
 			continue
 		}
 		if len(day.Events) >= max(g.MaxTrips, 1) {
 			day.Skipped++
+			entry.Kind, entry.Reason = KindIgnored, "over the daily route budget"
+			day.Entries = append(day.Entries, entry)
 			continue
 		}
 		day.Events = append(day.Events, Event{
-			ID:          eventKey(it.ev),
-			Summary:     strings.TrimSpace(it.ev.Summary),
-			Start:       it.start,
-			Origin:      origin,
-			Destination: loc,
+			ID: entry.ID, Summary: entry.Summary, Start: it.start,
+			Origin: origin, Destination: loc,
 		})
+		entry.Kind = KindTrip
+		day.Entries = append(day.Entries, entry)
 		lastPlace, lastEnd = loc, it.end
 	}
 	return day.withNote(total, missingHome)
 }
 
-// skipEvent drops what is on the calendar but is not an appointment to travel
-// to: out-of-office and working-location rows, cancelled events, invitations
-// the user declined, and the departure blocks this app wrote itself (reading
-// those back would brief a trip to a trip).
-func skipEvent(ev *calendar.Event) bool {
+// skipReason says why a row on the calendar is not an appointment to travel
+// to — and stays empty when it is. Out-of-office and working-location rows,
+// cancelled events, invitations the user declined, and the departure blocks
+// this app wrote itself (reading those back would brief a trip to a trip).
+func skipReason(ev *calendar.Event) string {
 	if ev.Status == "cancelled" {
-		return true
+		return "cancelled"
 	}
 	switch ev.EventType {
-	case "outOfOffice", "workingLocation", "birthday", "focusTime":
-		return true
+	case "outOfOffice":
+		return "out of office"
+	case "workingLocation":
+		return "working location"
+	case "birthday":
+		return "birthday"
+	case "focusTime":
+		return "focus time"
 	}
 	if ev.ExtendedProperties != nil && ev.ExtendedProperties.Private["automate_me_kind"] != "" {
-		return true
+		return "written by Automate.me"
 	}
 	for _, a := range ev.Attendees {
 		if a.Self && a.ResponseStatus == "declined" {
-			return true
+			return "you declined it"
 		}
 	}
-	return false
+	return ""
 }
+
+// SourceLabel names the calendars this day was read from.
+func (g *GoogleCalendar) SourceLabel() string { return "google:" + strings.Join(g.readIDs, ",") }
 
 // eventKey is a stable, filename-safe id for a card built from this event.
 func eventKey(ev *calendar.Event) string {

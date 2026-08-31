@@ -7,12 +7,35 @@ import (
 	"time"
 )
 
+// Entry is one row of the day exactly as the calendar has it, kind included.
+// The briefing prices only the trips, but the SPA shows the whole day: a
+// person's agenda is the context the cards live in.
+type Entry struct {
+	ID       string    `json:"id"`
+	Summary  string    `json:"summary"`
+	Start    time.Time `json:"start"`
+	End      time.Time `json:"end"`
+	Kind     string    `json:"kind"` // trip | remote | no_place | ignored
+	Location string    `json:"location,omitempty"`
+	// Why an entry is not a trip, in the user's words ("Zoom link", "declined").
+	Reason string `json:"reason,omitempty"`
+}
+
+// Kinds of Entry.
+const (
+	KindTrip    = "trip"
+	KindRemote  = "remote"
+	KindNoPlace = "no_place"
+	KindIgnored = "ignored"
+)
+
 // DaySchedule is a calendar day after the source has separated the trips from
 // the screen time. Only Events cost a route call; the counters are what the
 // briefing says about everything else, so a fully remote day still reports
 // something true instead of an empty page.
 type DaySchedule struct {
 	Events  []Event `json:"events"`
+	Entries []Entry `json:"entries"`  // the whole day, trips included, in time order
 	Remote  int     `json:"remote"`   // Zoom/Meet/Teams — nothing to drive to
 	NoPlace int     `json:"no_place"` // no location on the event
 	Skipped int     `json:"skipped"`  // all-day, declined, out-of-office, our own blocks
@@ -22,17 +45,29 @@ type DaySchedule struct {
 // EventSource supplies the appointments of one day.
 type EventSource interface {
 	EventsFor(ctx context.Context, day time.Time) (DaySchedule, error)
+	// SourceLabel names where the day came from ("seed", "google:…"), so the
+	// UI never leaves the user guessing whose calendar they are reading.
+	SourceLabel() string
 }
 
 // DemoSource is the seeded São Paulo day: what the briefing shows when no
 // calendar is connected (DEMO_MODE=seed, no CALENDAR_ID).
 type DemoSource struct{ Loc *time.Location }
 
+func (DemoSource) SourceLabel() string { return "seed" }
+
 func (s DemoSource) EventsFor(_ context.Context, day time.Time) (DaySchedule, error) {
 	evs := DemoAppointments(day, s.Loc)
+	entries := make([]Entry, 0, len(evs))
+	for _, e := range evs {
+		entries = append(entries, Entry{
+			ID: e.ID, Summary: e.Summary, Start: e.Start, End: e.Start.Add(time.Hour),
+			Kind: KindTrip, Location: e.Destination,
+		})
+	}
 	return DaySchedule{
-		Events: evs,
-		Note:   fmt.Sprintf("%d seeded appointments — no calendar connected (set CALENDAR_ID to brief your real day).", len(evs)),
+		Events: evs, Entries: entries,
+		Note: fmt.Sprintf("%d seeded appointments — no calendar connected (set CALENDAR_ID to brief your real day).", len(evs)),
 	}, nil
 }
 
