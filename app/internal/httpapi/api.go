@@ -36,6 +36,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /app/api/proposals", h.proposals)
 	mux.HandleFunc("POST /app/api/proposals/{id}/approve", h.approve)
 	mux.HandleFunc("POST /app/api/trusted/consent", h.consent)
+	mux.HandleFunc("GET /app/api/trusted/authority", h.authority)
+	mux.HandleFunc("POST /app/api/trusted/authority", h.grantAuthority)
+	mux.HandleFunc("DELETE /app/api/trusted/authority", h.revokeAuthority)
 	mux.HandleFunc("GET /app/api/ledger", h.ledger)
 	mux.HandleFunc("GET /app/api/mandates", h.mandates)
 	mux.HandleFunc("GET /app/api/agenda", h.agenda)
@@ -312,7 +315,27 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+
+	// Approving is also where autonomy happens: if a standing authorization
+	// covers this purchase, it completes here and the user never sees a
+	// consent screen. If it does not, nothing is signed and the UI falls back
+	// to consent — so the response carries the proposal's own fields
+	// unchanged and adds the attempt beside them.
+	attempt := h.tryAutonomousPurchase(r.Context(), uid, p)
+	if attempt.Purchased {
+		// The surface moved the proposal to executed; report what it is now.
+		if updated, err := h.Store.GetProposal(r.Context(), p.ID); err == nil {
+			p = updated
+		}
+	}
+	writeJSON(w, http.StatusOK, approveResponse{Proposal: p, Autonomous: attempt})
+}
+
+// approveResponse embeds the Proposal so every field the SPA already reads
+// keeps its place at the top level, and adds the autonomous attempt alongside.
+type approveResponse struct {
+	store.Proposal
+	Autonomous autonomousAttempt `json:"autonomous"`
 }
 
 type consentRequest struct {

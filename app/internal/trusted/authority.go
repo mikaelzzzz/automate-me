@@ -34,6 +34,12 @@ const authorityAudience = "trusted-surface"
 // so it expires on its own.
 const DefaultAuthorityTTL = 30 * 24 * time.Hour
 
+// DemoMerchantID is the one merchant this build transacts with (the app is
+// wired to a single MERCHANT_URL). Authorizations are always scoped to it
+// rather than issued for "any merchant", so a merchant the user never
+// authorized cannot inherit their envelope.
+const DemoMerchantID = "automate-me-demo-merchant"
+
 // SpendingAuthority is the UI-facing view of a standing authorization. The JWT
 // itself is deliberately not included: it is a bearer artifact and the browser
 // has no use for it.

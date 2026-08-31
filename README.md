@@ -23,7 +23,7 @@ The loop is **Proof of Time**: capture → price → rank → **execute** → pr
 
 1. **Capture.** Tell the agent your routine in chat, or **photograph** a handwritten list, a pile of boletos, a school note. Gemini reads the pixels; the analyst confirms the numbers with you before saving.
 2. **Price.** A deterministic Go **Value Engine** computes the *Cost of Inaction*: `minutes × times/month × your hourly rate`. **No LLM ever produces a money figure.**
-3. **Rank.** Routines are matched against a 26-recipe catalog (8 executable, 9 advised, 9 roadmap) and ranked by payback. Negative-net automations are never proposed.
+3. **Rank.** Routines are matched against a 26-recipe catalog (9 executable, 8 advised, 9 roadmap) and ranked by payback. Negative-net automations are never proposed.
 4. **Execute.** With explicit approval the agent acts: buys a dishwasher over AP2, plans the day from live traffic, writes departure blocks to the calendar.
 5. **Prove.** The Savings Ledger accumulates hours and R$ bought back, with the signed AP2 receipts attached to each purchase.
 
@@ -55,6 +55,10 @@ anything: a purchase still has to be signed on the consent screen.
 **The Daily Briefing is measured, not guessed.** For each appointment: the Routes API is called twice (rough departure, then refined at the departure it just computed, because traffic depends on when you leave), congestion is priced as `(duration − staticDuration) × your hourly rate`, the hourly forecast at departure drives a clothing line, and flood risk comes from two layers — live public alerts whose polygon your route crosses, and **192 flooding occurrences logged by São Paulo's Civil Defense** (GeoSampa), matched within 150 m of the route polyline. August is dry season in São Paulo, so the historic layer is what keeps the feature honest.
 
 **Nothing signs money except you.** The Trusted Surface is non-agentic by construction (AP2 threat model): the user's P-256 key lives in a package no LLM code path can reach, and a mandate is only signed after the consent endpoint is called from the UI.
+
+**And yet the agent buys on its own.** You sign one **Spending Authorization** up front — a standing, user-signed delegation carrying a per-purchase cap, a merchant allowlist and a hard expiry. Under it the agent completes a purchase with nobody watching: it buys the R$350 grocery basket by itself and says so afterwards. The R$3,000 dishwasher is above the cap, so it stops and asks for a signature. What did *not* change is the point — the agent still cannot sign, reach the key, mint an authorization or widen one. It asks the Trusted Surface, which checks the envelope against the **merchant-signed** total (never a locally computed price) and refuses on its own terms. The check runs after the Checkout JWT is verified and before the first signature, so a refusal signs nothing and leaves no trace on the rail. Explicit consent always outranks the envelope. What moved is *when* the human decides: once, over a bounded envelope, instead of once per purchase.
+
+> A Spending Authorization is **not** an AP2 artifact. AP2 v0.2 defines exactly four `vct` strings and this is none of them, so it is namespaced `automate.spending_authorization.1`, never sent to the merchant, and documented as an extension rather than claimed as conformance.
 
 ---
 

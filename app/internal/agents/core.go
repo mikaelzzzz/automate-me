@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"automate-me/app/internal/catalog"
@@ -123,17 +124,40 @@ func (d Deps) Approve(ctx context.Context, userID string, in approveIn) (approve
 		return approveOut{}, err
 	}
 	out := approveOut{Status: "approved", Recipe: p.RecipeID}
+	var productID string
 	for _, r := range catalog.Seed() {
 		if r.ID != p.RecipeID {
 			continue
 		}
 		out.Recipe = r.Title
 		out.Executable = r.Class == catalog.ClassExecutable && r.ProductID != ""
+		productID = r.ProductID
 	}
-	if out.Executable {
-		out.Next = "Purchase: tell the user to review and sign on the consent screen (the 'Review & sign' button); the agent cannot sign payment mandates."
-	} else {
+	switch {
+	case !out.Executable:
 		out.Next = "Guided recipe, nothing to buy: give the user 2-4 concrete setup steps for this recipe right now. Do not mention a consent screen."
+	default:
+		// Try to complete it under the standing authorization the user signed.
+		// The tool cannot sign anything: it asks the Trusted Surface, which
+		// checks the envelope against the merchant-signed total and refuses on
+		// its own terms.
+		out.Next = "Purchase: tell the user to review and sign on the consent screen (the 'Review & sign' button); the agent cannot sign payment mandates."
+		if d.Trusted == nil {
+			break
+		}
+		res, err := d.Trusted.ExecuteAutonomousPurchase(ctx, userID, p.ID, productID, 1)
+		switch {
+		case err != nil:
+			// The rail failed. The approval stands; fall back to consent.
+			slog.Error("autonomous purchase failed", "user", userID, "proposal", p.ID, "err", err)
+		case res.Completed:
+			out.Purchased = true
+			out.PurchaseTotal = brl(res.Checkout.Total.Amount)
+			out.MandateRef = res.MandateRecordID
+			out.Next = "Bought. Tell the user you completed the purchase yourself under the spending authorization they signed, name the amount, and say the signed receipt is in the ledger. Do not mention a consent screen — there was none."
+		case res.NeedsConsent && res.Checkout.Total.Amount > 0:
+			out.Next = "Above the authorized amount (" + brl(res.Checkout.Total.Amount) + "): tell the user this one is over the limit they set, so it needs their signature on the consent screen ('Review & sign')."
+		}
 	}
 	return out, nil
 }

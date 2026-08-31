@@ -22,6 +22,7 @@ import (
 	"automate-me/app/internal/briefing"
 	"automate-me/app/internal/memorybank"
 	"automate-me/app/internal/store"
+	"automate-me/app/internal/trusted"
 )
 
 // Deps carries the deterministic modules the tools operate on.
@@ -47,6 +48,11 @@ type Deps struct {
 	// Consult runs the agent graph (Gemini 3.5 Flash) for the voice session.
 	// Set after the graph is built, since it closes over the runner.
 	Consult func(ctx context.Context, userID, question string) (Consultation, error)
+	// Trusted is the non-agentic Trusted Surface. The graph holds it only to
+	// *attempt* a purchase under a standing authorization the user signed —
+	// it cannot sign, mint or widen one. Nil disables autonomous buying, and
+	// every purchase then goes through the consent screen.
+	Trusted *trusted.Surface
 }
 
 // brl formats integer centavos as "R$3,366.08" (en-US grouping, matching the
@@ -161,6 +167,13 @@ type approveOut struct {
 	Recipe     string `json:"recipe"`
 	Executable bool   `json:"agent_can_execute"`
 	Next       string `json:"next"`
+	// Purchased is true when a standing Spending Authorization covered this
+	// one and the agent completed the AP2 dance without a consent screen.
+	Purchased bool `json:"purchased_autonomously,omitempty"`
+	// PurchaseTotal is what was actually charged, formatted for speech.
+	PurchaseTotal string `json:"purchase_total,omitempty"`
+	// MandateRef is the audit-trail record of an autonomous purchase.
+	MandateRef string `json:"mandate_ref,omitempty"`
 }
 
 func (d Deps) approveProposal() (tool.Tool, error) {

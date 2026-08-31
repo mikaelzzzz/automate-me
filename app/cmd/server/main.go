@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	_ "time/tzdata" // distroless has no zoneinfo; the briefing needs America/Sao_Paulo
@@ -60,6 +61,29 @@ func main() {
 		}
 	}
 	surface := trusted.NewSurface(st, merchant)
+
+	// The demo starts with an envelope already signed, the same way it starts
+	// already logged in: the user's standing authorization lets the agent
+	// complete the cheap recurring purchases on its own, while anything above
+	// the cap still stops for a signature. Outside demo mode nothing is
+	// authorized until the user grants it from the Trusted Surface.
+	if cmp.Or(os.Getenv("DEMO_MODE"), "seed") == "seed" {
+		capCents := int64(1000_00)
+		if v := os.Getenv("DEMO_SPENDING_CAP_CENTS"); v != "" {
+			if parsed, err := strconv.ParseInt(v, 10, 64); err == nil && parsed > 0 {
+				capCents = parsed
+			} else {
+				slog.Warn("ignoring unusable DEMO_SPENDING_CAP_CENTS", "value", v)
+			}
+		}
+		auth, err := surface.GrantSpendingAuthority(store.DemoUserID, capCents, "BRL",
+			[]string{trusted.DemoMerchantID}, trusted.DefaultAuthorityTTL)
+		if err != nil {
+			log.Fatalf("seed spending authority: %v", err)
+		}
+		slog.Info("demo mode: standing spending authority granted",
+			"user", store.DemoUserID, "cap_cents", capCents, "expires_at", auth.ExpiresAt)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -136,6 +160,7 @@ func main() {
 		Events:   events,
 		Memory:   mem,
 		Sessions: sessions,
+		Trusted:  surface,
 	}
 
 	// Build the graph first: the voice tools delegate into it, so it has to

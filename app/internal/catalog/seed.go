@@ -73,10 +73,16 @@ func Seed() []Recipe {
 			ProductID: "rv-200",
 		},
 		{
-			ID: "grocery-delivery", Title: "Grocery delivery subscription",
-			Class: ClassAdvised, Capability: CapAP2Purchase,
-			Cost:      CostModel{MonthlyRunningCents: 80_00, MinutesSavedPerOcc: 120},
-			Triggers:  []string{"mercado", "grocery", "supermercado", "compras"},
+			ID: "grocery-delivery", Title: "Grocery delivery (agent purchase)",
+			// Executable, not advised: the merchant sells this basket and the
+			// AP2 rail buys it. A cheap, repeating purchase is exactly what a
+			// standing spending authorization is for.
+			Class: ClassExecutable, Capability: CapAP2Purchase,
+			Cost: CostModel{MonthlyRunningCents: 80_00, MinutesSavedPerOcc: 120},
+			// "supermarket" was missing: the matcher is a substring test and
+			// none of the other triggers appear inside the English word, so an
+			// English-declared grocery run matched nothing.
+			Triggers:  []string{"mercado", "grocery", "supermercado", "supermarket", "compras"},
 			ProductID: "grocery-basic",
 		},
 		{

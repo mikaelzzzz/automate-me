@@ -34,14 +34,24 @@ https://automate-me-288504867090.us-central1.run.app
 No login and no credentials required — the app boots with seeded demo data
 (`DEMO_MODE=seed`), so judges land straight on a working dashboard.
 
+The demo user starts with a **Spending Authorization** already signed: a standing delegation
+capped at R$ 1,000 per purchase. This is what makes the two-tier behaviour below visible.
+
 Suggested path:
 1. Open the URL. The dashboard shows the Life P&L and the Savings Ledger.
-2. Open **Proposals** — the dishwasher automation is ranked at R$ 1,375/month recovered,
-   2.18-month payback.
-3. Approve it. The consent screen appears; approving signs an AP2 mandate and the signed
-   receipt is attached in the Ledger. **Payments are simulated and labelled as such — the AP2
-   protocol itself runs for real (ECDSA P-256 signed mandates, verifiable receipts).**
+2. Open **Proposals**. Approve **Grocery delivery** (R$ 350). The agent completes the purchase
+   **by itself** — no consent screen — because it falls under the authorization you signed.
+   The signed AP2 receipt lands in the Ledger.
+3. Now approve **Buy a dishwasher** (R$ 3,000, ranked at R$ 1,375/month recovered, 2.18-month
+   payback). This one is **above the cap**, so the agent refuses to proceed on its own and the
+   consent screen appears. Nothing was signed by the refused attempt. Confirming here signs the
+   mandate and completes the purchase — explicit consent outranks the standing envelope.
+   **Payments are simulated and labelled as such — the AP2 protocol itself runs for real
+   (ECDSA P-256 signed mandates, verifiable receipts).**
 4. Open the **Daily Briefing** and run it, for live Google Maps Routes + Weather data.
+
+The envelope itself is inspectable and changeable at `GET`/`POST`/`DELETE
+/app/api/trusted/authority`.
 
 Backend runs on Google Cloud Run in `us-central1`. The merchant agent
 (`merchant-agent`) is a second, private Cloud Run service, invokable only by the app's
@@ -62,11 +72,19 @@ The loop is *Proof of Time*: capture → price → rank → execute → prove.
    with you before saving anything.
 2. **Price.** A deterministic Go Value Engine computes the *Cost of Inaction*:
    `minutes × times per month × your hourly rate`. **No LLM ever produces a money figure.**
-3. **Rank.** Routines are matched against a 26-recipe catalog (8 executable, 9 advised, 9
+3. **Rank.** Routines are matched against a 26-recipe catalog (9 executable, 8 advised, 9
    roadmap) and ranked by payback. Negative-net automations are never proposed.
-4. **Execute.** With explicit approval the agent acts: buys a dishwasher over the AP2 payment
-   protocol against a separate merchant agent, plans the day from live traffic, writes
+4. **Execute — and, under a signed envelope, without being asked.** You sign one **Spending
+   Authorization** up front: a standing delegation with a per-purchase cap, a merchant
+   allowlist and a hard expiry. Under it the agent completes purchases with nobody watching —
+   it buys the R$350 grocery basket by itself. The R$3,000 dishwasher is above the cap, so it
+   stops and asks for a signature. It also plans the day from live traffic and writes
    departure blocks to Calendar.
+
+   The agent still cannot sign, reach the key, mint an authorization or widen one. It asks the
+   Trusted Surface, which checks the envelope against the **merchant-signed** total — never a
+   locally computed price — after the Checkout JWT is verified and before the first signature,
+   so a refusal signs nothing. Explicit consent always outranks the envelope.
 5. **Prove.** The Savings Ledger accumulates hours and R$ bought back, with signed AP2
    receipts attached to each purchase.
 
@@ -117,6 +135,14 @@ time for the second. Congestion is then priced deterministically as
 lives in a `trusted` package that no LLM code path can reach, and a mandate is only signed
 after the consent endpoint is called from the UI. Making the trusted surface non-agentic by
 construction was easier to reason about than trying to constrain a model with prompting.
+
+**Autonomy and safety were not the trade-off we assumed.** The obvious way to let an agent buy
+without asking is to loosen the rule that a human authorizes payments. The right way turned out
+to be the opposite: keep that rule absolute and move *when* the human applies it. A standing,
+user-signed authorization with a cap, an allowlist and an expiry gives the agent real autonomy
+while the signing surface stays exactly as non-agentic as before. The cap is checked against
+the merchant-signed total, because a cap enforced against a price our own code computed would
+be a cap an attacker could move.
 
 **Keeping money out of the model is what makes the product credible.** Every R$ figure comes
 from a deterministic Go engine. An LLM that hallucinates a savings number destroys the one
