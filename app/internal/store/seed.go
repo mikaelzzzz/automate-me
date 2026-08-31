@@ -14,7 +14,19 @@ const DemoUserID = "demo"
 // "simulated weeks" in the UI (PRD §8), and a drifting action plan for the
 // Guardian scene. now anchors relative dates so the demo is stable on any day.
 func SeedDemo(ctx context.Context, s Store, now time.Time) error {
-	u := User{ID: DemoUserID, Name: "Ana", Mode: "personal", HourlyRateCents: 50_00}
+	// Onboarded on purpose: judges and the demo video land on a working
+	// dashboard, never on a setup screen (SUBMISSION_ANSWERS.md promises
+	// exactly that). The setup flow stays one click away from the P&L.
+	// R$50/h is the rate every published figure is quoted at — the dishwasher
+	// recovering R$1,375/month and paying for itself in 2.18 months — so it
+	// must not move here.
+	u := User{
+		ID: DemoUserID, Name: "Ana", Mode: "personal", HourlyRateCents: 50_00,
+		RateBasis: "declared", Onboarded: true,
+		HomeAddress: "Rua dos Pinheiros 1000, Pinheiros, São Paulo",
+		WorkAddress: "Av. Paulista 1578, Bela Vista, São Paulo",
+		WorkSetup:   "hybrid",
+	}
 	if err := s.PutUser(ctx, u); err != nil {
 		return err
 	}
