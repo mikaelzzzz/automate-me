@@ -81,7 +81,8 @@ flowchart LR
             RA["routine_analyst<br/><small>interview · vision</small>"]
             AA["automation_advisor<br/><small>catalog · payback</small>"]
             DP["day_planner<br/><small>routes · weather · floods</small>"]
-            ORCH --> RA & AA & DP
+            PS["product_scout<br/><small>live web · real prices · links</small>"]
+            ORCH --> RA & AA & DP & PS
         end
 
         subgraph DET["deterministic core — no LLM on these paths"]
@@ -114,6 +115,7 @@ flowchart LR
     subgraph GCP["Google Cloud"]
         direction TB
         GEM["Gemini 3.5 Flash"]
+        GS["Google Search<br/><small>grounding, inside the model</small>"]
         LIVEAPI["Gemini Live 3.1<br/><small>conversational audio</small>"]
         MEM[("Agent Engine · Memory Bank<br/><small>facts per user_id</small>")]
         FS[("Firestore<br/><small>ADK sessions · events · state</small>")]
@@ -129,6 +131,7 @@ flowchart LR
     U ==>|"🎙️ audio · WebSocket with a single-use token"| LIVEAPI
     LIVEAPI -.->|"function calls"| LIVE
     GRAPH --> GEM
+    PS -->|"the only agent with Search"| GS
     ORCH <-->|"sessions survive the revision"| FS
     ORCH <-->|"recall · remember the turn"| MEM
     LIVE <-->|"recall before the first word · store the call"| MEM
@@ -144,7 +147,7 @@ flowchart LR
     classDef ext fill:#FFFFFF,stroke:#B9B4A7,stroke-dasharray:3 3
     classDef mem fill:#F0E7D9,stroke:#BC9A75,stroke-width:2px
     class ENG,BR,CALR,TS det
-    class GEM,LIVEAPI,MAPS,SEC,SCHED,GEO,CAL ext
+    class GEM,LIVEAPI,MAPS,SEC,SCHED,GEO,CAL,GS ext
     class MEM,FS mem
 ```
 
@@ -255,7 +258,7 @@ ap2core/            AP2 v0.2 crypto — checkout JWT, closed mandates, receipts,
                     JWK P-256. Shared by both services. 10 test funcs.
 app/
   cmd/server        wiring: SPA, REST, adkrest, agent graph
-  internal/agents   the graph: orchestrator + 3 sub-agents, 7 tools
+  internal/agents   the graph: orchestrator + 4 sub-agents, tools shared with voice
                     core.go — tool bodies shared by the graph and the voice
                     session, plus the Live tool registry
   internal/engine   Value Engine — pure Go, int64 centavos, no I/O
