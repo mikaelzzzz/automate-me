@@ -170,14 +170,24 @@ Recorded per the "pro tips": no intro, already logged in, all load time cut.
 
 | Time | Screen | Say |
 |---|---|---|
-| 0:00–0:15 | App already open, agent panel streaming a proposal card | "This is my agent. It found R$ 1,375 a month leaking out of my dishwashing routine, and it is about to buy the fix." Show the number on screen first — do not explain before showing. |
+| 0:00–0:15 | App already open. Approve **Grocery delivery** (R$ 350) — it just buys, no consent screen | "My agent just bought this by itself. No confirmation, because I signed a spending limit once and this is under it." Show the purchase landing first — do not explain before showing. |
 | 0:15–0:50 | Chat: paste (never type) a routine, or drop the photo of a handwritten list | The analyst confirms the minutes with you. On-screen text: "no LLM ever produces a money figure — a deterministic Go engine does." |
-| 0:50–1:30 | Proposal → approve → consent screen → AP2 receipt in the Ledger | "Approval is mine, not the agent's. The mandate is signed with a P-256 key that no model code path can reach." Show the signed receipt. Keep the "payments are simulated" label visible — honesty scores. |
+| 0:50–1:30 | Approve **the dishwasher** (R$ 3,000) → it **stops** → consent screen → AP2 receipt in the Ledger | **The strongest 40 seconds in the video — this is the autonomy score.** "Three thousand reais is above my limit, so it refuses to proceed and asks me. Nothing was signed by that refusal." Then confirm by hand and show the signed receipt. "The agent cannot sign. The key lives where no model code path reaches it." Keep the "payments are simulated" label visible — honesty scores. |
 | 1:30–2:15 | Daily Briefing | "Routes API is called twice, because congestion depends on when you leave. Flood risk comes from 192 occurrences logged by São Paulo's Civil Defense." Show the departure block landing in Calendar. |
 | 2:15–2:45 | **Google Cloud proof** — address bar showing `automate-me-288504867090.us-central1.run.app`, then the Cloud Run console page, then `gcloud run services logs read` in a terminal | "The backend is Cloud Run. Two services, ADK Go v2 and Gemini 3.5 Flash, agent-to-agent over A2A." |
 | 2:45–3:00 | Architecture diagram (`docs/design/architecture.png`) | One line on the loop: capture → price → rank → execute → prove. |
 
 Record in short clips so one bad take does not cost the whole video.
+
+**Reset the demo before you record.** The store is in memory, so once you approve something it
+stays approved on that instance. To get both purchases back to `proposed`:
+
+```bash
+GCP_PROJECT=automate-me-hack ONLY=app SKIP_BUILD=1 ./infra/deploy.sh   # ~1 min, new instance
+curl -s https://automate-me-288504867090.us-central1.run.app/app/api/proposals | grep -c proposed
+```
+
+Rehearse as much as you like, then reset once more and record.
 
 ---
 
