@@ -10,12 +10,15 @@ import {
 } from '../lib/chat'
 import type { Proposal } from '../lib/api'
 import { brl } from '../lib/api'
+import type { Activity } from '../lib/activity'
 
-// The agent panel: a live timeline of what the graph is doing — text streams
-// token by token, tool calls show up as activity rows, tool results become
-// cards you can act on (approve, sign) without leaving the conversation.
+// The right rail: what the agent has been doing, and the way you talk to it.
+// Derived activity seeds the timeline; live tool calls, hand-overs and
+// actionable result cards append to the same column as you converse.
 
-export interface ChatHandle {
+export type Screen = 'pnl' | 'briefing' | 'proposals' | 'ledger' | 'teams' | 'guardian'
+
+export interface AgentHandle {
   send: (text: string) => void
   notify: (n: Notice) => void
 }
@@ -56,7 +59,6 @@ type Item =
   | { id: number; kind: 'confirm'; pending: PendingConfirmation }
   | { id: number; kind: 'error'; text: string }
 
-// Omit that distributes over the union — plain Omit<Item,'id'> collapses to the common keys.
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never
 type NewItem = DistributiveOmit<Item, 'id'>
 
@@ -75,7 +77,7 @@ function activityLabel(call: FunctionCall): string {
     case 'approve_proposal':
       return 'Recording your approval'
     case 'plan_my_day':
-      return 'Planning the day · one route worker per appointment · traffic, weather, flood layers'
+      return 'Planning the day · one route worker per appointment'
     case 'get_daily_briefing':
       return 'Reading today’s briefing'
     case 'write_departure_blocks':
@@ -96,41 +98,40 @@ function describeConfirmation(p: PendingConfirmation, proposals: Proposal[]): st
       ? `Approve “${title}”? Nothing is bought yet — you still sign on the consent screen.`
       : `Approve “${title}”? The agent records it and guides the setup.`
   }
-  return `${o.name.replace(/_/g, ' ')}`
+  if (o.name === 'write_departure_blocks') return 'Write the “Leave at” blocks to your calendar?'
+  return o.name.replace(/_/g, ' ')
 }
 
 function closeStreaming(items: Item[]): Item[] {
   const last = items[items.length - 1]
-  if (last?.kind === 'agent' && last.streaming) {
-    return [...items.slice(0, -1), { ...last, streaming: false }]
-  }
+  if (last?.kind === 'agent' && last.streaming) return [...items.slice(0, -1), { ...last, streaming: false }]
   return items
 }
 
-const BASE_PROMPTS = [
-  'I wash dishes about an hour every day',
-  'What is leaking the most money?',
-  'What should I automate first?',
-]
+const BASE_PROMPTS = ['What should I automate first?', 'Brief me on my day', 'I wash dishes an hour a day']
 
-export function ChatPanel({
+const TONE = {
+  done: '#3F7D58',
+  waiting: '#BC9A75',
+  attention: '#C9553D',
+} as const
+
+export function AgentRail({
   ref,
-  open,
   proposals,
-  onClose,
+  activity,
   onDataChanged,
   onOpenConsent,
-  onShowLedger,
-  onShowBriefing,
+  onGo,
+  onClose,
 }: {
-  ref?: Ref<ChatHandle>
-  open: boolean
+  ref?: Ref<AgentHandle>
   proposals: Proposal[]
-  onClose: () => void
+  activity: Activity[]
   onDataChanged: () => void
   onOpenConsent: (proposalId: string) => void
-  onShowLedger: () => void
-  onShowBriefing: () => void
+  onGo: (s: Screen) => void
+  onClose?: () => void
 }) {
   const [items, setItems] = useState<Item[]>([])
   const [input, setInput] = useState('')
@@ -142,18 +143,17 @@ export function ChatPanel({
   const scroller = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
   const textarea = useRef<HTMLTextAreaElement>(null)
-  // args of in-flight tool calls, so results can be rendered with context
   const callArgs = useRef<Record<string, Record<string, unknown>>>({})
   const seenResults = useRef<Set<string>>(new Set())
 
   useEffect(() => {
-    if (open && !sess.current.ready && !offline) {
-      sess.current.init().catch(() => setOffline(true))
-    }
-  }, [open, offline])
+    if (!sess.current.ready && !offline) sess.current.init().catch(() => setOffline(true))
+  }, [offline])
 
   useEffect(() => {
-    if (stickToBottom.current) scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })
+    if (stickToBottom.current && items.length) {
+      scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })
+    }
   }, [items, busy])
 
   const push = useCallback((it: NewItem) => {
@@ -187,7 +187,10 @@ export function ChatPanel({
           const callId = ev.call.id
           setItems((xs) => {
             if (callId && xs.some((x) => x.kind === 'activity' && x.callId === callId)) return xs
-            return [...closeStreaming(xs), { id: nextId(), kind: 'activity', label: activityLabel(ev.call), status: 'running', tool: ev.call.name, callId }]
+            return [
+              ...closeStreaming(xs),
+              { id: nextId(), kind: 'activity', label: activityLabel(ev.call), status: 'running', tool: ev.call.name, callId },
+            ]
           })
           break
         }
@@ -222,10 +225,17 @@ export function ChatPanel({
             push({ kind: 'proposals', rows: res['proposals'] as ProposalRow[] })
           } else if (name === 'approve_proposal' && res['status'] === 'approved') {
             push({ kind: 'approved', proposalId: String(args['proposal_id'] ?? '') })
-          } else if ((name === 'plan_my_day' || name === 'get_daily_briefing') && Array.isArray(res['cards']) && (res['cards'] as unknown[]).length > 0) {
+          } else if (
+            (name === 'plan_my_day' || name === 'get_daily_briefing') &&
+            Array.isArray(res['cards']) &&
+            (res['cards'] as unknown[]).length > 0
+          ) {
             push({ kind: 'briefing', day: String(res['day'] ?? ''), rows: res['cards'] as BriefingRow[] })
           }
-          if (['add_routine_task', 'propose_automations', 'approve_proposal', 'plan_my_day', 'write_departure_blocks'].includes(name)) onDataChanged()
+          if (
+            ['add_routine_task', 'propose_automations', 'approve_proposal', 'plan_my_day', 'write_departure_blocks'].includes(name)
+          )
+            onDataChanged()
           break
         }
         case 'confirm':
@@ -287,8 +297,7 @@ export function ChatPanel({
     canvas.width = Math.round(img.width * scale)
     canvas.height = Math.round(img.height * scale)
     canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height)
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
-    setAttachment({ mimeType: 'image/jpeg', data: dataUrl.split(',')[1], previewUrl: url })
+    setAttachment({ mimeType: 'image/jpeg', data: canvas.toDataURL('image/jpeg', 0.85).split(',')[1], previewUrl: url })
   }, [])
 
   const answer = useCallback(
@@ -317,201 +326,224 @@ export function ChatPanel({
     [send, push],
   )
 
-  // textarea grows 1→4 rows; measure only while visible (display:none → scrollHeight 0)
   useEffect(() => {
     const el = textarea.current
-    if (!el || !open) return
+    if (!el) return
     if (!input) {
       el.style.height = ''
       return
     }
     el.style.height = '0px'
     el.style.height = Math.min(el.scrollHeight, 112) + 'px'
-  }, [input, open])
+  }, [input])
 
   const approvedExecutable = proposals.find((p) => p.status === 'approved' && p.executable)
   const prompts = approvedExecutable
-    ? [`__consent:${approvedExecutable.id}`, ...BASE_PROMPTS.slice(0, 2)]
+    ? [`__consent:${approvedExecutable.id}`, BASE_PROMPTS[1]]
     : proposals.some((p) => p.status === 'proposed')
-      ? [BASE_PROMPTS[2], 'Approve the best one', BASE_PROMPTS[0]]
+      ? [BASE_PROMPTS[0], 'Approve the best one', BASE_PROMPTS[1]]
       : BASE_PROMPTS
 
-  const runPrompt = (p: string) => {
-    if (p.startsWith('__consent:')) onOpenConsent(p.slice('__consent:'.length))
-    else void send(p)
-  }
+  const runPrompt = (p: string) =>
+    p.startsWith('__consent:') ? onOpenConsent(p.slice('__consent:'.length)) : void send(p)
 
-  const lastItem = items[items.length - 1]
-  const showTyping = busy && !(lastItem?.kind === 'agent' && lastItem.streaming) && !(lastItem?.kind === 'activity' && lastItem.status === 'running')
+  const last = items[items.length - 1]
+  const showTyping =
+    busy && !(last?.kind === 'agent' && last.streaming) && !(last?.kind === 'activity' && last.status === 'running')
 
   return (
-    <>
-      {/* mobile backdrop */}
-      {open && <div className="fixed inset-0 z-30 bg-[rgba(36,35,33,0.25)] lg:hidden" onClick={onClose} />}
-
-      <aside
-        className={`${open ? 'flex' : 'hidden'} flex-col overflow-hidden bg-surface rounded-t-card lg:rounded-card border-subtle shadow-[var(--shadow-float)] fixed inset-x-0 bottom-0 z-40 h-[88vh] lg:inset-x-auto lg:bottom-auto lg:top-[5.5rem] lg:right-[max(1.5rem,calc((100vw-1480px)/2+1.5rem))] lg:w-[400px] xl:w-[420px] lg:h-[calc(100vh-6.5rem)] lg:z-20`}
-        aria-label="Automate.me agent"
-      >
-        {/* header */}
-        <div className="px-4 py-3 flex items-center gap-3 border-b border-[rgba(36,35,33,0.06)] bg-surface/95 backdrop-blur">
-          <span className="w-8 h-8 rounded-full bg-sun-soft flex items-center justify-center text-base" aria-hidden>
-            ☀️
-          </span>
-          <div className="min-w-0">
-            <div className="font-medium leading-tight">Automate.me agent</div>
-            <div className="text-[11px] text-ink-tertiary leading-tight flex items-center gap-1.5">
-              <span
-                className="w-1.5 h-1.5 rounded-full"
-                style={{ background: offline ? '#b3261e' : busy ? '#e5b73c' : '#2e7d32' }}
-              />
-              {offline ? 'offline — dashboard still works' : busy ? 'working…' : '3 agents · gemini-3.5-flash · live'}
-            </div>
-          </div>
+    <aside className="flex flex-col overflow-hidden bg-surface-warm border-l border-line h-full" aria-label="Agent activity">
+      <header className="px-5 pt-5 pb-3 shrink-0 flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+        <h2 className="m-0 text-[17px] font-semibold leading-tight">Agent activity</h2>
+        <p className="m-0 mt-0.5 text-xs text-ink-tertiary flex items-center gap-1.5">
+          <span
+            className="w-1.5 h-1.5 rounded-full"
+            style={{ background: offline ? TONE.attention : busy ? TONE.waiting : TONE.done }}
+          />
+          {offline
+            ? 'chat offline — the dashboard still works'
+            : busy
+              ? 'working…'
+              : `${activity.length} action${activity.length === 1 ? '' : 's'} today · live`}
+        </p>
+        </div>
+        {onClose && (
           <button
             onClick={onClose}
-            className="ml-auto rounded-pill px-3 py-1.5 text-xs text-ink-secondary hover:bg-surface-subtle cursor-pointer"
-            aria-label="Hide agent panel"
+            className="xl:hidden rounded-pill px-3 py-1.5 text-xs text-ink-secondary hover:bg-surface-sunk cursor-pointer shrink-0"
           >
             Hide
           </button>
-        </div>
+        )}
+      </header>
 
-        {/* timeline */}
-        <div
-          ref={scroller}
-          onScroll={(e) => {
-            const el = e.currentTarget
-            stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-          }}
-          className="chat-scroll flex-1 overflow-y-auto px-4 py-4 space-y-2"
-        >
-          {items.length === 0 && (
-            <div className="chat-item">
-              <div className="text-sm bg-surface-raised border-subtle rounded-2xl rounded-bl-md px-3.5 py-3">
-                <p className="m-0">
-                  Tell me one routine that eats your time. I’ll price it, then find what pays for itself fastest.
-                </p>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {BASE_PROMPTS.map((q) => (
-                  <button
-                    key={q}
-                    onClick={() => void send(q)}
-                    className="text-left text-xs rounded-pill border-subtle bg-surface-raised px-3 py-1.5 cursor-pointer hover:bg-sun-soft/40 transition-colors"
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+      <div
+        ref={scroller}
+        onScroll={(e) => {
+          const el = e.currentTarget
+          stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+        }}
+        className="chat-scroll flex-1 overflow-y-auto px-5 pb-4 space-y-2.5"
+      >
+        {activity.map((a) => (
+          <ActivityRow key={a.id} a={a} onGo={onGo} />
+        ))}
 
-          {items.map((it, i) => (
-            <Row key={it.id} item={it} prev={items[i - 1]} proposals={proposals} onAnswer={answer} onSend={send} onOpenConsent={onOpenConsent} onShowLedger={onShowLedger} onShowBriefing={onShowBriefing} />
-          ))}
+        {activity.length === 0 && items.length === 0 && (
+          <p className="text-sm text-ink-secondary leading-relaxed">
+            Nothing yet. Tell me a routine that eats your time — or drop a photo of your list — and I’ll price it.
+          </p>
+        )}
 
-          {showTyping && (
-            <div className="chat-item dot-typing text-ink-tertiary text-sm pl-1" aria-label="agent is thinking">
-              <span>●</span>
-              <span>●</span>
-              <span>●</span>
-            </div>
-          )}
-        </div>
+        {items.length > 0 && (
+          <div className="pt-3 mt-1 border-t border-line flex items-center gap-2">
+            <span className="scap">this conversation</span>
+          </div>
+        )}
 
-        {/* composer */}
-        <div className="border-t border-[rgba(36,35,33,0.06)] bg-surface/95 backdrop-blur p-3 space-y-2">
-          {items.length > 0 && !busy && (
-            <div className="flex gap-1.5 overflow-x-auto chat-scroll pb-0.5">
-              {prompts.map((p) => (
-                <button
-                  key={p}
-                  onClick={() => runPrompt(p)}
-                  className={`shrink-0 text-xs rounded-pill px-3 py-1.5 cursor-pointer transition-colors ${
-                    p.startsWith('__consent:')
-                      ? 'bg-ink text-white hover:bg-[#3a3835]'
-                      : 'border-subtle bg-surface-raised hover:bg-sun-soft/40'
-                  }`}
-                >
-                  {p.startsWith('__consent:') ? 'Review & sign the purchase →' : p}
-                </button>
-              ))}
-            </div>
-          )}
-          {attachment && (
-            <div className="flex items-center gap-2 text-xs text-ink-secondary">
-              <img src={attachment.previewUrl} alt="" className="h-12 w-12 object-cover rounded-lg border-subtle" />
-              <span>Photo attached — I’ll read every item on it.</span>
-              <button type="button" onClick={() => setAttachment(null)} className="ml-auto rounded-pill px-2 py-1 hover:bg-surface-subtle cursor-pointer" aria-label="Remove photo">
-                ✕
+        {items.map((it, i) => (
+          <Row
+            key={it.id}
+            item={it}
+            prev={items[i - 1]}
+            proposals={proposals}
+            onAnswer={answer}
+            onSend={send}
+            onOpenConsent={onOpenConsent}
+            onGo={onGo}
+          />
+        ))}
+
+        {showTyping && (
+          <div className="chat-item dot-typing text-ink-tertiary text-sm pl-1" aria-label="agent is thinking">
+            <span>●</span>
+            <span>●</span>
+            <span>●</span>
+          </div>
+        )}
+      </div>
+
+      <div className="shrink-0 px-4 pb-4 pt-3 space-y-2 bg-surface-warm">
+        {!busy && (
+          <div className="flex gap-1.5 overflow-x-auto chat-scroll pb-0.5">
+            {prompts.map((p) => (
+              <button
+                key={p}
+                onClick={() => runPrompt(p)}
+                className={`shrink-0 text-xs rounded-pill px-3 py-1.5 cursor-pointer transition-colors ${
+                  p.startsWith('__consent:')
+                    ? 'bg-gold text-teal font-medium hover:brightness-105'
+                    : 'border border-line bg-surface hover:bg-gold-tint'
+                }`}
+              >
+                {p.startsWith('__consent:') ? 'Review & authorize →' : p}
               </button>
-            </div>
-          )}
-          <form
-            className="flex items-end gap-2"
-            onSubmit={(e) => {
-              e.preventDefault()
-              void send(input)
-            }}
-          >
-            <input
-              ref={fileInput}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                if (f) void attachFile(f)
-                e.target.value = ''
-              }}
-            />
+            ))}
+          </div>
+        )}
+
+        {attachment && (
+          <div className="flex items-center gap-2 text-xs text-ink-secondary">
+            <img src={attachment.previewUrl} alt="" className="h-11 w-11 object-cover rounded-lg border border-line" />
+            <span>Photo attached — I’ll read every item on it.</span>
             <button
               type="button"
-              onClick={() => fileInput.current?.click()}
-              disabled={busy}
-              title="Photo of a list, calendar, boletos or note"
-              aria-label="Attach a photo"
-              className="rounded-full w-10 h-10 shrink-0 border-subtle bg-surface-raised cursor-pointer hover:bg-sun-soft/40 disabled:opacity-40 text-base"
+              onClick={() => setAttachment(null)}
+              className="ml-auto rounded-pill px-2 py-1 hover:bg-surface-sunk cursor-pointer"
+              aria-label="Remove photo"
             >
-              📷
+              ✕
             </button>
-            <textarea
-              ref={textarea}
-              value={input}
-              rows={1}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  void send(input)
-                }
-              }}
-              placeholder="Describe a routine…"
-              className="flex-1 resize-none rounded-2xl bg-surface-raised border-subtle px-4 py-2.5 text-sm outline-none leading-5"
-            />
-            {busy ? (
-              <button
-                type="button"
-                onClick={() => sess.current.stop()}
-                className="rounded-pill border-subtle bg-surface-raised px-4 py-2.5 text-sm cursor-pointer hover:bg-surface-subtle"
-              >
-                Stop
-              </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={!input.trim() && !attachment}
-                className="rounded-pill bg-ink text-white px-4 py-2.5 text-sm cursor-pointer disabled:opacity-40 font-medium"
-              >
-                Send
-              </button>
-            )}
-          </form>
-        </div>
-      </aside>
-    </>
+          </div>
+        )}
+
+        <form
+          className="flex items-end gap-2 bg-surface border border-line rounded-[22px] px-2 py-1.5"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void send(input)
+          }}
+        >
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) void attachFile(f)
+              e.target.value = ''
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInput.current?.click()}
+            disabled={busy}
+            title="Photo of a list, calendar, boletos or note"
+            aria-label="Attach a photo"
+            className="rounded-full w-9 h-9 shrink-0 cursor-pointer hover:bg-gold-tint disabled:opacity-40 text-base leading-none"
+          >
+            📷
+          </button>
+          <textarea
+            ref={textarea}
+            value={input}
+            rows={1}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send(input)
+              }
+            }}
+            placeholder="Ask or describe a routine"
+            className="flex-1 resize-none bg-transparent px-1 py-2 text-sm outline-none leading-5 placeholder:text-ink-tertiary"
+          />
+          {busy ? (
+            <button
+              type="button"
+              onClick={() => sess.current.stop()}
+              className="rounded-pill border border-line bg-surface px-3.5 py-2 text-xs cursor-pointer hover:bg-surface-sunk shrink-0"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!input.trim() && !attachment}
+              aria-label="Send"
+              className="rounded-full w-9 h-9 shrink-0 bg-teal text-white cursor-pointer disabled:opacity-35 flex items-center justify-center"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
+                <path d="M5 12h13M12 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
+        </form>
+      </div>
+    </aside>
+  )
+}
+
+function ActivityRow({ a, onGo }: { a: Activity; onGo: (s: Screen) => void }) {
+  return (
+    <div className="flex gap-2.5 rise">
+      <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-[7px]" style={{ background: TONE[a.tone] }} aria-hidden />
+      <div className="min-w-0">
+        <div className="text-[13.5px] font-medium leading-snug">{a.title}</div>
+        <div className="text-[11.5px] text-ink-tertiary leading-snug">{a.meta}</div>
+        {a.action && (
+          <button
+            onClick={() => onGo(a.action!.go)}
+            className="mt-0.5 text-[11.5px] font-medium text-gold-deep hover:text-teal cursor-pointer bg-transparent"
+          >
+            {a.action.label} →
+          </button>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -522,8 +554,7 @@ function Row({
   onAnswer,
   onSend,
   onOpenConsent,
-  onShowLedger,
-  onShowBriefing,
+  onGo,
 }: {
   item: Item
   prev?: Item
@@ -531,16 +562,15 @@ function Row({
   onAnswer: (item: Extract<Item, { kind: 'confirm' }>, yes: boolean) => void
   onSend: (text: string) => void
   onOpenConsent: (id: string) => void
-  onShowLedger: () => void
-  onShowBriefing: () => void
+  onGo: (s: Screen) => void
 }) {
   switch (item.kind) {
     case 'user':
       return (
         <div className="chat-item flex justify-end">
-          <div className="max-w-[85%] bg-sun-soft/70 rounded-2xl rounded-br-md px-3.5 py-2 text-sm whitespace-pre-wrap">
+          <div className="max-w-[88%] bg-teal text-white rounded-2xl rounded-br-md px-3.5 py-2 text-sm whitespace-pre-wrap">
             {item.imageUrl && (
-              <img src={item.imageUrl} alt="attached photo" className="block max-h-40 rounded-xl mb-2 border border-sun-deep/30" />
+              <img src={item.imageUrl} alt="attached photo" className="block max-h-36 rounded-xl mb-2 border border-white/20" />
             )}
             {item.text}
           </div>
@@ -552,13 +582,13 @@ function Row({
       return (
         <div className="chat-item">
           {showHeader && (
-            <div className="flex items-center gap-1.5 text-[11px] text-ink-tertiary mb-1 pl-1">
+            <div className="flex items-center gap-1.5 text-[11px] text-ink-tertiary mb-1 pl-0.5">
               <span className="w-1.5 h-1.5 rounded-full" style={{ background: meta.color }} />
               <span className="font-medium text-ink-secondary">{meta.label}</span>
               {meta.role && <span>· {meta.role}</span>}
             </div>
           )}
-          <div className="max-w-[92%] bg-surface-raised border-subtle rounded-2xl rounded-bl-md px-3.5 py-2.5 text-sm chat-md">
+          <div className="bg-surface border border-line rounded-2xl rounded-bl-md px-3.5 py-2.5 text-sm chat-md">
             <Markdown>{item.text}</Markdown>
             {item.streaming && <span className="cursor" aria-hidden />}
           </div>
@@ -567,15 +597,15 @@ function Row({
     }
     case 'activity':
       return (
-        <div className="chat-item flex items-center gap-2 pl-1 text-xs text-ink-secondary py-0.5">
+        <div className="chat-item flex items-center gap-2 pl-0.5 text-xs text-ink-secondary py-0.5">
           {item.status === 'running' ? (
             <span className="ring shrink-0" aria-hidden />
-          ) : item.tool === 'you' ? (
-            <span className="w-3 h-3 rounded-full bg-sun-deep shrink-0 flex items-center justify-center text-[8px] text-ink" aria-hidden>
-              ✓
-            </span>
           ) : (
-            <span className="w-3 h-3 rounded-full bg-success-tint text-success shrink-0 flex items-center justify-center text-[9px]" aria-hidden>
+            <span
+              className="w-3 h-3 rounded-full shrink-0 flex items-center justify-center text-[9px] text-white"
+              style={{ background: item.tool === 'you' ? TONE.waiting : TONE.done }}
+              aria-hidden
+            >
               ✓
             </span>
           )}
@@ -584,12 +614,12 @@ function Row({
       )
     case 'task':
       return (
-        <Card tag={item.updated ? 'task updated' : 'task saved'}>
+        <Card tag={item.updated ? 'routine updated' : 'routine saved'}>
           <div className="flex items-baseline justify-between gap-3">
             <span className="font-medium text-sm">{item.name}</span>
             <span className="tabular text-sm">
-              <span className="text-danger font-semibold">{item.cost}</span>
-              <span className="text-ink-tertiary">/mo leaking</span>
+              <span className="text-alert font-semibold">{item.cost}</span>
+              <span className="text-ink-tertiary">/mo</span>
             </span>
           </div>
         </Card>
@@ -597,8 +627,8 @@ function Row({
     case 'proposals': {
       const top = item.rows.slice(0, 3)
       return (
-        <Card tag="ranked by monthly savings · deterministic engine">
-          <div className="divide-y divide-[rgba(36,35,33,0.06)]">
+        <Card tag="ranked by monthly savings · Value Engine">
+          <div className="divide-y divide-[#E8E2D6]">
             {top.map((r) => {
               const live = proposals.find((p) => p.id === r.proposal_id)
               const status = live?.status ?? 'proposed'
@@ -607,33 +637,37 @@ function Row({
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium truncate">{r.recipe}</div>
                     <div className="text-xs text-ink-secondary">
-                      <span className="text-success font-medium tabular">{r.net_monthly}</span>/mo · pays back{' '}
+                      <span className="text-positive font-medium tabular">{r.net_monthly}</span>/mo · pays back{' '}
                       {r.payback_months.startsWith('immediate') ? 'immediately' : `in ${r.payback_months}`}
                     </div>
                   </div>
                   {status === 'proposed' ? (
                     <button
                       onClick={() => onSend(`Approve "${r.recipe}" (proposal ${r.proposal_id})`)}
-                      className="shrink-0 rounded-pill bg-ink text-white text-xs px-3 py-1.5 cursor-pointer hover:bg-[#3a3835]"
+                      className="shrink-0 rounded-pill bg-teal text-white text-xs px-3 py-1.5 cursor-pointer hover:bg-teal-soft"
                     >
                       Approve
                     </button>
                   ) : status === 'approved' && live?.executable ? (
                     <button
                       onClick={() => onOpenConsent(r.proposal_id)}
-                      className="shrink-0 rounded-pill bg-sun text-ink text-xs px-3 py-1.5 cursor-pointer font-medium"
+                      className="shrink-0 rounded-pill bg-gold text-teal text-xs px-3 py-1.5 cursor-pointer font-medium"
                     >
                       Sign →
                     </button>
                   ) : (
-                    <span className="shrink-0 text-[11px] rounded-pill px-2.5 py-1 bg-success-tint text-success">{status === 'executed' ? 'done' : status}</span>
+                    <span className="shrink-0 text-[11px] rounded-pill px-2.5 py-1 bg-positive-tint text-positive">
+                      {status === 'executed' ? 'done' : status}
+                    </span>
                   )}
                 </div>
               )
             })}
           </div>
           {item.rows.length > 3 && (
-            <div className="text-[11px] text-ink-tertiary mt-2">+{item.rows.length - 3} more on the dashboard</div>
+            <button onClick={() => onGo('proposals')} className="text-[11px] text-gold-deep mt-2 cursor-pointer bg-transparent">
+              +{item.rows.length - 3} more →
+            </button>
           )}
         </Card>
       )
@@ -643,7 +677,7 @@ function Row({
       const title = p?.recipe_title ?? item.proposalId
       const done = p?.status === 'executed'
       return (
-        <Card tag="approved" tone="sun">
+        <Card tag="approved" tone="gold">
           <div className="flex items-center gap-3">
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium truncate">{title}</div>
@@ -652,13 +686,13 @@ function Row({
                   ? 'Purchased via AP2 — receipts on the ledger.'
                   : p?.executable
                     ? 'The agent cannot sign payments. You do, on the consent screen.'
-                    : 'Guided recipe — ask the agent for the steps.'}
+                    : 'Guided recipe — ask for the steps.'}
               </div>
             </div>
             {!done && p?.executable && (
               <button
                 onClick={() => onOpenConsent(item.proposalId)}
-                className="shrink-0 rounded-pill bg-ink text-white text-xs px-3 py-1.5 cursor-pointer font-medium pop"
+                className="shrink-0 rounded-pill bg-teal text-white text-xs px-3 py-1.5 cursor-pointer font-medium pop"
               >
                 Review & sign
               </button>
@@ -666,7 +700,7 @@ function Row({
             {!done && p && !p.executable && (
               <button
                 onClick={() => onSend(`Give me the concrete steps to set up "${title}".`)}
-                className="shrink-0 rounded-pill border-subtle bg-surface-raised text-xs px-3 py-1.5 cursor-pointer hover:bg-sun-soft/40"
+                className="shrink-0 rounded-pill border border-line bg-surface text-xs px-3 py-1.5 cursor-pointer hover:bg-gold-tint"
               >
                 Get the steps
               </button>
@@ -678,21 +712,30 @@ function Row({
     case 'briefing':
       return (
         <Card tag={`daily briefing · ${item.day}`}>
-          <div className="divide-y divide-[rgba(36,35,33,0.06)]">
+          <div className="divide-y divide-[#E8E2D6]">
             {item.rows.map((r) => (
               <div key={r.card_id} className="py-2 first:pt-0 last:pb-0 flex items-center gap-3">
-                <div className="tabular text-sm font-semibold w-12 shrink-0" style={{ fontFamily: 'var(--font-display)' }}>{r.leave_at}</div>
+                <div className="tabular text-sm font-semibold w-11 shrink-0 display">{r.leave_at}</div>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm truncate">{r.event}</div>
                   <div className="text-xs text-ink-secondary truncate">
                     {r.event_at} · {r.route}
-                    {r.traffic_minutes > 0 && <> · <span className="text-danger">+{r.traffic_minutes} min {r.traffic_cost}</span></>}
+                    {r.traffic_minutes > 0 && (
+                      <>
+                        {' '}
+                        · <span className="text-alert">+{r.traffic_minutes} min {r.traffic_cost}</span>
+                      </>
+                    )}
                   </div>
                 </div>
                 {r.flood_risk !== 'none' && (
                   <span
                     className="shrink-0 text-[10px] rounded-pill px-2 py-0.5"
-                    style={r.flood_risk === 'alert' ? { background: '#fce8e6', color: '#b3261e' } : { background: '#fbf0cc', color: '#8a6d0b' }}
+                    style={
+                      r.flood_risk === 'alert'
+                        ? { background: '#FBEDE9', color: '#8A3D2B' }
+                        : { background: '#F0E7D9', color: '#8B6B47' }
+                    }
                     title={r.flood_detail}
                   >
                     {r.flood_risk === 'alert' ? 'flood alert' : 'flood history'}
@@ -701,53 +744,54 @@ function Row({
               </div>
             ))}
           </div>
-          <button onClick={onShowBriefing} className="mt-2 text-xs text-ink-secondary hover:text-ink cursor-pointer bg-transparent">
-            open the Briefing →
+          <button onClick={() => onGo('briefing')} className="mt-2 text-[11px] text-gold-deep cursor-pointer bg-transparent">
+            Open the briefing →
           </button>
         </Card>
       )
     case 'purchase':
       return (
-        <Card tag="purchased · AP2 v0.2 · simulated" tone="success">
-          <div className="flex items-center gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium truncate">{item.title}</div>
-              <div className="text-xs text-ink-secondary">
-                <span className="tabular">{brl(item.total)}</span> · 2 mandates signed by you · 2 receipts verified · ref{' '}
-                <code className="text-[11px]">{item.mandateRef}</code>
-              </div>
-            </div>
-            <button onClick={onShowLedger} className="shrink-0 rounded-pill border-subtle bg-surface-raised text-xs px-3 py-1.5 cursor-pointer hover:bg-sun-soft/40">
-              Ledger →
-            </button>
+        <Card tag="purchased · AP2 v0.2 · simulated" tone="positive">
+          <div className="text-sm font-medium">{item.title}</div>
+          <div className="text-xs text-ink-secondary mt-0.5">
+            <span className="tabular">{brl(item.total)}</span> · 2 mandates signed by you · 2 receipts verified
           </div>
+          <button onClick={() => onGo('ledger')} className="mt-1.5 text-[11px] text-gold-deep cursor-pointer bg-transparent">
+            Read the receipts →
+          </button>
         </Card>
       )
     case 'confirm':
       return (
-        <div className="chat-item pop bg-sun-soft/60 border border-sun-deep/40 rounded-2xl px-3.5 py-3 text-sm">
+        <div className="chat-item pop bg-gold-tint border border-[rgba(188,154,117,.4)] rounded-2xl px-3.5 py-3 text-sm">
           <div className="font-medium mb-0.5">Your call</div>
           <div className="text-xs text-ink-secondary mb-2.5">{describeConfirmation(item.pending, proposals)}</div>
           <div className="flex gap-2">
-            <button onClick={() => onAnswer(item, true)} className="rounded-pill bg-ink text-white px-3.5 py-1.5 text-xs cursor-pointer font-medium">
+            <button
+              onClick={() => onAnswer(item, true)}
+              className="rounded-pill bg-teal text-white px-3.5 py-1.5 text-xs cursor-pointer font-medium"
+            >
               Approve
             </button>
-            <button onClick={() => onAnswer(item, false)} className="rounded-pill border-subtle bg-surface-raised px-3.5 py-1.5 text-xs cursor-pointer">
+            <button
+              onClick={() => onAnswer(item, false)}
+              className="rounded-pill border border-line bg-surface px-3.5 py-1.5 text-xs cursor-pointer"
+            >
               Decline
             </button>
           </div>
         </div>
       )
     case 'error':
-      return <div className="chat-item bg-danger-tint text-danger rounded-2xl px-3.5 py-2 text-xs">{item.text}</div>
+      return <div className="chat-item bg-alert-tint text-alert-deep rounded-2xl px-3.5 py-2 text-xs">{item.text}</div>
   }
 }
 
-function Card({ tag, tone = 'plain', children }: { tag: string; tone?: 'plain' | 'sun' | 'success'; children: React.ReactNode }) {
-  const bg = tone === 'sun' ? 'bg-sun-soft/40' : tone === 'success' ? 'bg-success-tint' : 'bg-surface-raised'
+function Card({ tag, tone = 'plain', children }: { tag: string; tone?: 'plain' | 'gold' | 'positive'; children: React.ReactNode }) {
+  const bg = tone === 'gold' ? 'bg-gold-tint' : tone === 'positive' ? 'bg-positive-tint' : 'bg-surface'
   return (
-    <div className={`chat-item pop ${bg} border-subtle rounded-2xl px-3.5 py-3`}>
-      <div className="text-[10px] uppercase tracking-[0.08em] text-ink-tertiary mb-1.5">{tag}</div>
+    <div className={`chat-item pop ${bg} border border-line rounded-2xl px-3.5 py-3`}>
+      <div className="scap mb-1.5">{tag}</div>
       {children}
     </div>
   )

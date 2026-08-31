@@ -5,8 +5,8 @@ import { brl, hours } from '../lib/api'
 // Hero chart: cumulative time/money bought back, week over week.
 // Confirmed = solid gold area; projected = dashed blue line (dash is the
 // secondary encoding on top of the validator-approved pair).
-const GOLD = '#a07c12'
-const BLUE = '#2c5fa8'
+const GOLD = '#BC9A75' // confirmed: the money actually banked
+const TEAL = '#13353F' // projected: what approved automations should still recover
 
 interface Pt {
   x: number
@@ -69,12 +69,12 @@ export function EvolutionChart({ entries }: { entries: LedgerEntry[] }) {
         </span>
         <span className="inline-flex items-center gap-1.5">
           <svg width="14" height="2">
-            <line x1="0" y1="1" x2="14" y2="1" stroke={BLUE} strokeWidth="2" strokeDasharray="4 3" />
+            <line x1="0" y1="1" x2="14" y2="1" stroke={TEAL} strokeWidth="2" strokeDasharray="4 3" />
           </svg>
           Projected
         </span>
         {anySim && (
-          <span className="ml-auto bg-surface-subtle rounded-pill px-2.5 py-0.5">simulated weeks</span>
+          <span className="ml-auto bg-surface-sunk rounded-pill px-2.5 py-0.5">simulated weeks</span>
         )}
       </div>
 
@@ -92,12 +92,12 @@ export function EvolutionChart({ entries }: { entries: LedgerEntry[] }) {
             x2={W - PAD.r}
             y1={sy(maxY * f)}
             y2={sy(maxY * f)}
-            stroke="rgba(36,35,33,0.06)"
+            stroke="rgba(19,53,63,0.06)"
           />
         ))}
 
         <path d={area} fill={GOLD} opacity="0.14" />
-        <path d={line('projected')} fill="none" stroke={BLUE} strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" />
+        <path d={line('projected')} fill="none" stroke={TEAL} strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" />
         <path d={line('confirmed')} fill="none" stroke={GOLD} strokeWidth="2" strokeLinecap="round" />
 
         {/* direct labels at line ends — selective, not on every point */}
@@ -105,7 +105,7 @@ export function EvolutionChart({ entries }: { entries: LedgerEntry[] }) {
           {brl(last.confirmed)}
         </text>
         {last.projected !== last.confirmed && (
-          <text x={W - PAD.r + 6} y={sy(last.projected) + 4} fontSize="11" fill={BLUE}>
+          <text x={W - PAD.r + 6} y={sy(last.projected) + 4} fontSize="11" fill={TEAL}>
             {brl(last.projected)}
           </text>
         )}
@@ -129,15 +129,15 @@ export function EvolutionChart({ entries }: { entries: LedgerEntry[] }) {
 
         {hover !== null && (
           <g pointerEvents="none">
-            <line x1={sx(hover)} x2={sx(hover)} y1={PAD.t} y2={H - PAD.b} stroke="rgba(36,35,33,0.25)" strokeDasharray="2 3" />
+            <line x1={sx(hover)} x2={sx(hover)} y1={PAD.t} y2={H - PAD.b} stroke="rgba(19,53,63,0.25)" strokeDasharray="2 3" />
             <circle cx={sx(hover)} cy={sy(pts[hover].confirmed)} r="4" fill={GOLD} stroke="#fbfaf6" strokeWidth="2" />
-            <circle cx={sx(hover)} cy={sy(pts[hover].projected)} r="4" fill={BLUE} stroke="#fbfaf6" strokeWidth="2" />
+            <circle cx={sx(hover)} cy={sy(pts[hover].projected)} r="4" fill={TEAL} stroke="#fbfaf6" strokeWidth="2" />
           </g>
         )}
       </svg>
 
       {hover !== null && (
-        <div className="text-xs text-ink-secondary bg-surface-raised border-subtle rounded-xl px-3 py-2 inline-block shadow-[var(--shadow-lift)]">
+        <div className="text-xs text-ink-secondary bg-paper border-subtle rounded-xl px-3 py-2 inline-block shadow-[var(--shadow-lift)]">
           <span className="font-medium text-ink">week of {pts[hover].week}</span>
           {' · '}confirmed {brl(pts[hover].confirmed)} · projected {brl(pts[hover].projected)} ·{' '}
           {hours(pts[hover].hoursCum)} back

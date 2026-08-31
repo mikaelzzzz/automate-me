@@ -5,7 +5,6 @@ package agents
 
 import (
 	"fmt"
-	"sort"
 
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -16,6 +15,7 @@ import (
 	"automate-me/app/internal/briefing"
 	"automate-me/app/internal/catalog"
 	"automate-me/app/internal/engine"
+	"automate-me/app/internal/proposer"
 	"automate-me/app/internal/store"
 )
 
@@ -172,9 +172,6 @@ type proposalRow struct {
 	NetMonthly     string `json:"net_monthly"`
 	PaybackMonths  string `json:"payback_months"`
 	Executable     bool   `json:"agent_can_execute"`
-
-	netCents int64   // sort keys, not serialised
-	payback  float64 //
 }
 type proposeOut struct {
 	Proposals []proposalRow `json:"proposals"`
@@ -184,65 +181,21 @@ type proposeOut struct {
 func (d Deps) proposeAutomations() (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name:        "propose_automations",
-		Description: "Match the user's tasks against the automation catalog, rank by payback (deterministic engine) and persist proposals. Negative-net automations are never proposed.",
+		Description: "Match the user's tasks against the automation catalog, rank by net monthly savings (deterministic engine) and persist proposals. Negative-net automations are never proposed.",
 	}, func(ctx agent.Context, in proposeIn) (proposeOut, error) {
-		u, err := d.userRate(ctx)
+		results, err := proposer.Propose(ctx, d.Store, d.UserID(ctx), in.TaskID)
 		if err != nil {
 			return proposeOut{}, err
 		}
-		tasks, err := d.Store.ListTasks(ctx, u.ID)
-		if err != nil {
-			return proposeOut{}, err
-		}
-		recipes := catalog.Seed()
 		out := proposeOut{Note: "Payback computed deterministically. Executable proposals need explicit user approval before any action."}
-		for _, t := range tasks {
-			if in.TaskID != "" && t.ID != in.TaskID {
-				continue
-			}
-			for _, r := range catalog.Match(t.Name, recipes) {
-				if r.Class == catalog.ClassRoadmap {
-					continue
-				}
-				ev := engine.Evaluate(engine.Automation{
-					Name:                r.ID,
-					UpfrontCents:        r.Cost.UpfrontCents,
-					MonthlyRunningCents: r.Cost.MonthlyRunningCents,
-					MinutesSavedPerOcc:  min(r.Cost.MinutesSavedPerOcc, t.EstMinutes),
-					FreqPerMonth:        t.FreqPerMon,
-				}, u.HourlyRateCents)
-				if !ev.Proposable {
-					continue
-				}
-				p := store.Proposal{
-					ID:     "prop-" + t.ID + "-" + r.ID,
-					UserID: u.ID, TaskID: t.ID, RecipeID: r.ID,
-					MonthlySavingsCents: ev.MonthlySavingsCents,
-					NetMonthlyCents:     ev.NetMonthlyCents,
-					PaybackMonths:       ev.PaybackMonths,
-					Status:              store.ProposalProposed,
-				}
-				if err := d.Store.PutProposal(ctx, p); err != nil {
-					return proposeOut{}, err
-				}
-				out.Proposals = append(out.Proposals, proposalRow{
-					ProposalID: p.ID, Recipe: r.Title, Class: string(r.Class),
-					MonthlySavings: brl(ev.MonthlySavingsCents), NetMonthly: brl(ev.NetMonthlyCents),
-					PaybackMonths: paybackText(ev.PaybackMonths),
-					Executable:    r.Class == catalog.ClassExecutable && r.ProductID != "",
-					netCents:      ev.NetMonthlyCents,
-					payback:       ev.PaybackMonths,
-				})
-			}
+		for _, r := range results {
+			out.Proposals = append(out.Proposals, proposalRow{
+				ProposalID: r.Proposal.ID, Recipe: r.Recipe.Title, Class: string(r.Recipe.Class),
+				MonthlySavings: brl(r.Proposal.MonthlySavingsCents), NetMonthly: brl(r.Proposal.NetMonthlyCents),
+				PaybackMonths: paybackText(r.Proposal.PaybackMonths),
+				Executable:    r.Recipe.Class == catalog.ClassExecutable && r.Recipe.ProductID != "",
+			})
 		}
-		// Rank: biggest net monthly recovery first; ties → faster payback.
-		sort.SliceStable(out.Proposals, func(i, j int) bool {
-			a, b := out.Proposals[i], out.Proposals[j]
-			if a.netCents != b.netCents {
-				return a.netCents > b.netCents
-			}
-			return a.payback < b.payback
-		})
 		return out, nil
 	})
 }

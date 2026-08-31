@@ -126,10 +126,20 @@ func (h *Handler) briefingBlock(w http.ResponseWriter, r *http.Request) {
 // it without a client-side copy of the catalog.
 type proposalView struct {
 	store.Proposal
-	RecipeTitle string `json:"recipe_title"`
-	RecipeClass string `json:"recipe_class"`
+	RecipeTitle       string `json:"recipe_title"`
+	RecipeDescription string `json:"recipe_description"`
+	RecipeClass       string `json:"recipe_class"`
 	// Executable: the agent can buy it through the AP2 rail (has a product).
-	Executable bool `json:"executable"`
+	Executable bool   `json:"executable"`
+	ProductID  string `json:"product_id,omitempty"`
+	// The Value Engine's inputs, so the consent screen can show the same
+	// arithmetic the ranking used instead of restating a conclusion.
+	UpfrontCents       int64   `json:"upfront_cents"`
+	RunningCents       int64   `json:"monthly_running_cents"`
+	MinutesSavedPerOcc int     `json:"minutes_saved_per_occurrence"`
+	TaskMinutes        int     `json:"task_minutes"`
+	TaskFreqPerMonth   float64 `json:"task_freq_per_month"`
+	HourlyRateCents    int64   `json:"hourly_rate_cents"`
 }
 
 type ledgerView struct {
@@ -186,13 +196,39 @@ func (h *Handler) proposals(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err)
 		return
 	}
+	u, err := h.Store.GetUser(r.Context(), h.UserID(r))
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	tasks, err := h.Store.ListTasks(r.Context(), h.UserID(r))
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	byID := make(map[string]store.Task, len(tasks))
+	for _, t := range tasks {
+		byID[t.ID] = t
+	}
 	out := make([]proposalView, 0, len(ps))
 	for _, p := range ps {
-		v := proposalView{Proposal: p, RecipeTitle: p.RecipeID}
+		v := proposalView{Proposal: p, RecipeTitle: p.RecipeID, HourlyRateCents: u.HourlyRateCents}
 		if rec, ok := findRecipe(p.RecipeID); ok {
 			v.RecipeTitle = rec.Title
+			v.RecipeDescription = rec.Description
 			v.RecipeClass = string(rec.Class)
 			v.Executable = rec.Class == catalog.ClassExecutable && rec.ProductID != ""
+			v.ProductID = rec.ProductID
+			v.UpfrontCents = rec.Cost.UpfrontCents
+			v.RunningCents = rec.Cost.MonthlyRunningCents
+			v.MinutesSavedPerOcc = rec.Cost.MinutesSavedPerOcc
+		}
+		if t, ok := byID[p.TaskID]; ok {
+			v.TaskMinutes = t.EstMinutes
+			v.TaskFreqPerMonth = t.FreqPerMon
+			if v.MinutesSavedPerOcc > t.EstMinutes {
+				v.MinutesSavedPerOcc = t.EstMinutes
+			}
 		}
 		out = append(out, v)
 	}

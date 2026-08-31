@@ -22,3 +22,6 @@ app/web/dist/
 
 # Scratch
 tmp/
+
+# Claude Code worktrees
+.claude/worktrees/

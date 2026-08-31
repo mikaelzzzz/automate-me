@@ -29,9 +29,18 @@ export interface Proposal {
   task_id: string
   recipe_id: string
   recipe_title: string
+  recipe_description: string
   recipe_class: 'executable' | 'advised' | 'roadmap' | ''
   /** The agent can buy it through the AP2 rail (recipe has a product). */
   executable: boolean
+  product_id?: string
+  /** Value Engine inputs, so the consent screen shows the same arithmetic. */
+  upfront_cents: number
+  monthly_running_cents: number
+  minutes_saved_per_occurrence: number
+  task_minutes: number
+  task_freq_per_month: number
+  hourly_rate_cents: number
   monthly_savings_cents: number
   net_monthly_cents: number
   payback_months: number
@@ -141,6 +150,16 @@ export const api = {
 export function brl(cents: number): string {
   const v = cents / 100
   return v.toLocaleString('en-US', { style: 'currency', currency: 'BRL', currencyDisplay: 'symbol' })
+}
+
+/** Whole reais — for hero figures where the cents are noise. */
+export function brlWhole(cents: number): string {
+  return (cents / 100).toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'BRL',
+    currencyDisplay: 'symbol',
+    maximumFractionDigits: 0,
+  })
 }
 
 export function hours(h: number): string {

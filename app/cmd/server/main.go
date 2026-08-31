@@ -21,6 +21,7 @@ import (
 	"automate-me/app/internal/agents"
 	"automate-me/app/internal/briefing"
 	"automate-me/app/internal/httpapi"
+	"automate-me/app/internal/proposer"
 	"automate-me/app/internal/shopping"
 	"automate-me/app/internal/store"
 	"automate-me/app/internal/trusted"
@@ -34,7 +35,13 @@ func main() {
 		if err := store.SeedDemo(ctx, st, time.Now()); err != nil {
 			log.Fatalf("seed demo data: %v", err)
 		}
-		slog.Info("demo mode: seeded in-memory store", "user", store.DemoUserID)
+		// The demo starts where an agent has already been: the same matcher
+		// the propose_automations tool runs, over the seeded routines.
+		props, err := proposer.Propose(ctx, st, store.DemoUserID, "")
+		if err != nil {
+			log.Fatalf("seed proposals: %v", err)
+		}
+		slog.Info("demo mode: seeded in-memory store", "user", store.DemoUserID, "proposals", len(props))
 	}
 
 	merchantURL := cmp.Or(os.Getenv("MERCHANT_URL"), "http://localhost:8081")

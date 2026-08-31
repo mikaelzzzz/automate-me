@@ -1,9 +1,28 @@
 import { useMemo } from 'react'
-import type { LedgerEntry, Pnl, Proposal } from '../lib/api'
-import { brl } from '../lib/api'
+import type { LedgerEntry, Pnl, PnlTask, Proposal } from '../lib/api'
+import { brl, brlWhole } from '../lib/api'
 import { useCountUp } from '../lib/useCountUp'
-import { BeforeAfterChart } from '../components/BeforeAfterChart'
+import type { Screen } from '../components/AgentRail'
 import { EvolutionChart } from '../components/EvolutionChart'
+
+// Life P&L: the payback table is the spine of the product. Every row is a
+// routine the agent captured, what it costs you a month, the fix it found,
+// and how fast that fix pays for itself.
+
+/** "50 min/day" · "1 h 30/week" · "40 min/month" — how the routine is lived. */
+export function cadence(t: PnlTask): string {
+  const mins = t.est_minutes
+  const per = mins >= 60 ? `${Math.floor(mins / 60)} h${mins % 60 ? ` ${mins % 60}` : ''}` : `${mins} min`
+  const f = t.freq_per_month
+  const unit = f >= 20 ? 'day' : f >= 3.5 ? 'week' : f >= 1.5 ? 'fortnight' : 'month'
+  return `${per}/${unit}`
+}
+
+const SOURCE: Record<string, string> = {
+  interview: 'declared in chat',
+  photo: 'read from a photo',
+  calendar: 'from Calendar',
+}
 
 export function Dashboard({
   pnl,
@@ -11,207 +30,233 @@ export function Dashboard({
   ledger,
   onBuy,
   onAsk,
-  onShowLedger,
+  onGo,
 }: {
   pnl: Pnl
   proposals: Proposal[]
   ledger: LedgerEntry[]
   onBuy: (p: Proposal) => void
   onAsk: (text: string) => void
-  onShowLedger: () => void
+  onGo: (s: Screen) => void
 }) {
   const tasks = pnl.tasks ?? []
-  const annual = useCountUp(pnl.total_cents_month * 12)
   const monthly = useCountUp(pnl.total_cents_month)
-  const hoursMonth = useCountUp(pnl.total_hours_month)
+  const hours = useCountUp(pnl.total_hours_month)
+  const annual = pnl.total_cents_month * 12
 
-  const recovered = useMemo(
-    () => ledger.filter((e) => e.confirmed).reduce((s, e) => s + e.brl_recovered_cents, 0),
-    [ledger],
-  )
+  const recovered = useMemo(() => ledger.filter((e) => e.confirmed).reduce((s, e) => s + e.brl_recovered_cents, 0), [ledger])
+  const projected = useMemo(() => ledger.filter((e) => !e.confirmed).reduce((s, e) => s + e.brl_recovered_cents, 0), [ledger])
+  const hoursBack = useMemo(() => ledger.reduce((s, e) => s + e.hours_recovered, 0), [ledger])
   const recoveredAnim = useCountUp(recovered)
 
-  const ranked = useMemo(
-    () =>
-      [...proposals].sort((a, b) => {
-        const order = { approved: 0, proposed: 1, executed: 2, declined: 3 }
-        const d = order[a.status] - order[b.status]
-        return d !== 0 ? d : b.net_monthly_cents - a.net_monthly_cents
-      }),
-    [proposals],
-  )
+  // one row per routine, carrying its best proposal
+  const rows = useMemo(() => {
+    const best = (taskId: string) =>
+      proposals
+        .filter((p) => p.task_id === taskId)
+        .sort((a, b) => {
+          const rank = { executed: 0, approved: 1, proposed: 2, declined: 3 }
+          const d = rank[a.status] - rank[b.status]
+          return d !== 0 ? d : b.net_monthly_cents - a.net_monthly_cents
+        })[0]
+    return tasks
+      .map((t) => ({ task: t, fix: best(t.id) }))
+      .sort((a, b) => b.task.cost_cents_month - a.task.cost_cents_month)
+  }, [tasks, proposals])
+
+  const withFix = rows.filter((r) => r.fix).length
+  const active = proposals.filter((p) => p.status === 'executed').length
+  const approved = proposals.filter((p) => p.status === 'approved').length
+
+  const month = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }).toUpperCase()
 
   return (
-    <div className="space-y-6">
-      {/* Anchoring: the ANNUAL leak is the first number, display-sized.
-          Loss aversion: it's the user's own routine, priced. */}
-      <header className="rise">
-        <p className="text-ink-secondary m-0 text-sm">
-          Your routine is leaking, at {brl(pnl.hourly_rate_cents)}/h of your time
-        </p>
-        <h1
-          className="m-0 leading-tight tabular"
-          style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2.2rem, 5vw, 3.2rem)', fontWeight: 600 }}
+    <div className="space-y-5 max-w-[1180px]">
+      {/* Anchoring: the monthly leak is the headline, the annual figure right
+          under it. Loss aversion: it is the user's own routine, priced. */}
+      <header className="rise flex flex-wrap items-start gap-4">
+        <div className="min-w-0 flex-1">
+          <p className="scap m-0">Life P&amp;L · {month}</p>
+          <h1 className="display m-0 mt-1.5 leading-none" style={{ fontSize: 'clamp(2.4rem, 4.4vw, 3.4rem)', fontWeight: 600 }}>
+            <span className="tabular">{brlWhole(Math.round(monthly))}</span>{' '}
+            <span className="text-ink-tertiary font-normal" style={{ fontSize: '0.56em' }}>
+              /month leaking
+            </span>
+          </h1>
+          <p className="text-ink-secondary text-sm mt-2 m-0 tabular">
+            {hours.toFixed(0)} h you don’t get back · {brlWhole(annual)} a year at {brl(pnl.hourly_rate_cents)}/h
+          </p>
+        </div>
+        <button
+          onClick={() => onAsk('I want to add another routine.')}
+          className="rounded-pill bg-teal text-white text-sm font-medium px-4 py-2.5 cursor-pointer hover:bg-teal-soft shrink-0"
         >
-          {brl(Math.round(annual))} <span className="text-ink-tertiary text-2xl">a year</span>
-        </h1>
-        <p className="text-ink-secondary mt-1 text-sm tabular">
-          {brl(Math.round(monthly))} every month · {hoursMonth.toFixed(0)} hours you don't get back
-        </p>
+          + Add routine
+        </button>
       </header>
 
-      {/* KPI pills */}
-      <div className="flex flex-wrap gap-3 rise" style={{ animationDelay: '60ms' }}>
-        <Kpi label="hours leaking / month" value={`${hoursMonth.toFixed(0)} h`} tone="leak" />
-        <Kpi label="money leaking / month" value={brl(Math.round(monthly))} tone="leak" />
-        <Kpi label="bought back so far" value={brl(Math.round(recoveredAnim))} tone="win" onClick={onShowLedger} />
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-2">
-        <section className="bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-5 rise" style={{ animationDelay: '120ms' }}>
-          <h2 className="m-0 mb-4 text-lg font-medium">Before / after automation</h2>
-          <BeforeAfterChart tasks={tasks} proposals={proposals} />
-        </section>
-
-        <section className="bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-5 rise" style={{ animationDelay: '180ms' }}>
-          <div className="flex items-baseline justify-between mb-4">
-            <h2 className="m-0 text-lg font-medium">Time bought back</h2>
-            <button onClick={onShowLedger} className="text-xs text-ink-secondary hover:text-ink cursor-pointer bg-transparent">
-              ledger →
-            </button>
-          </div>
-          <EvolutionChart entries={ledger} />
-        </section>
-      </div>
-
-      {/* Proposals — goal gradient: payback rendered as distance to break-even */}
-      <section className="rise" style={{ animationDelay: '240ms' }}>
-        <div className="flex items-baseline justify-between mb-3">
-          <h2 className="m-0 text-lg font-medium">What your agent proposes</h2>
-          {proposals.length > 0 && (
-            <span className="text-xs text-ink-tertiary">{proposals.length} proposals · ranked by monthly savings</span>
-          )}
+      {/* the payback table */}
+      <section className="bg-surface rounded-card border border-line shadow-[var(--shadow-lift)] overflow-hidden rise" style={{ animationDelay: '60ms' }}>
+        <div className="flex items-baseline justify-between gap-3 px-5 py-4">
+          <h2 className="m-0 text-[17px] font-semibold">Ranked by payback</h2>
+          <span className="text-xs text-ink-tertiary">
+            deterministic Value Engine · {withFix} fix{withFix === 1 ? '' : 'es'} for {rows.length} routine{rows.length === 1 ? '' : 's'}
+          </span>
         </div>
-        {proposals.length === 0 ? (
-          <div className="bg-surface/85 rounded-card hairline p-6 text-sm text-ink-secondary flex flex-wrap items-center gap-3">
-            <span className="flex-1 min-w-[240px]">Describe one routine to the agent and proposals appear here, ranked by payback.</span>
-            <button onClick={() => onAsk('What should I automate first?')} className="rounded-pill bg-ink text-white text-sm px-4 py-2 cursor-pointer">
-              Ask the agent
-            </button>
+
+        {rows.length === 0 ? (
+          <div className="px-5 pb-6 text-sm text-ink-secondary">
+            No routines yet. Tell the agent one — or drop a photo of your list — and it lands here, priced.
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {ranked.map((p) => (
-              <ProposalCard key={p.id} p={p} onBuy={() => onBuy(p)} onAsk={onAsk} onShowLedger={onShowLedger} />
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse min-w-[720px]">
+              <thead>
+                <tr className="bg-surface-warm">
+                  {['Routine', 'R$/mo lost', 'Suggested fix', 'Payback', ''].map((h, i) => (
+                    <th
+                      key={h || i}
+                      className={`scap font-semibold px-5 py-2.5 text-left ${i === 1 ? 'text-right' : ''} ${i === 4 ? 'w-[104px]' : ''}`}
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ task, fix }) => (
+                  <tr key={task.id} className="border-t border-line align-middle hover:bg-surface-warm/60 transition-colors">
+                    <td className="px-5 py-3.5">
+                      <div className="font-semibold leading-tight">{task.name}</div>
+                      <div className="text-xs text-ink-tertiary mt-0.5">
+                        {cadence(task)} · {SOURCE[task.source] ?? task.source}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3.5 text-right">
+                      <span className="display text-[21px] text-gold-deep tabular">
+                        {(task.cost_cents_month / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      {fix ? (
+                        <>
+                          <div className="leading-tight">{fix.recipe_title}</div>
+                          <div className="text-xs text-ink-tertiary mt-0.5">
+                            recovers <span className="text-positive tabular">{brl(fix.net_monthly_cents)}</span>/mo
+                          </div>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => onAsk(`What could automate "${task.name}"?`)}
+                          className="text-xs text-gold-deep hover:text-teal cursor-pointer bg-transparent"
+                        >
+                          ask the agent →
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5">{fix && <PaybackPill p={fix} />}</td>
+                    <td className="px-5 py-3.5">{fix && <RowAction p={fix} onBuy={() => onBuy(fix)} onAsk={onAsk} onGo={onGo} />}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
+
+      {/* proof */}
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] rise" style={{ animationDelay: '120ms' }}>
+        <section className="bg-surface rounded-card border border-line shadow-[var(--shadow-lift)] p-5">
+          <div className="flex items-baseline justify-between mb-4">
+            <h2 className="m-0 text-[17px] font-semibold">Bought back, week over week</h2>
+          </div>
+          <EvolutionChart entries={ledger} />
+        </section>
+
+        <section className="bg-teal text-white rounded-card p-5 flex flex-col">
+          <p className="scap m-0" style={{ color: '#BC9A75' }}>
+            Recovered so far
+          </p>
+          <div className="display mt-3 leading-none tabular" style={{ fontSize: '2.6rem', fontWeight: 600 }}>
+            {brl(Math.round(recoveredAnim))}
+          </div>
+          <p className="text-sm mt-2 m-0" style={{ color: 'rgba(255,255,255,.65)' }}>
+            {hoursBack.toFixed(0)} h · {ledger.filter((e) => e.confirmed).length} confirmed,{' '}
+            {ledger.filter((e) => !e.confirmed).length} projected
+            {projected > 0 && <> · {brl(projected)} on the way</>}
+          </p>
+          <div className="mt-auto pt-4 border-t text-sm" style={{ borderColor: 'rgba(255,255,255,.14)', color: 'rgba(255,255,255,.8)' }}>
+            {active === 0 && approved === 0
+              ? 'Guardian: nothing running yet — approve an automation and it starts watching.'
+              : active === 0
+                ? `Guardian: ${approved} approved, waiting on your signature.`
+                : `Guardian: ${active} automation${active === 1 ? '' : 's'} running${approved > 0 ? `, ${approved} waiting on your signature` : ''}.`}
+          </div>
+          <button
+            onClick={() => onGo('ledger')}
+            className="mt-3 self-start rounded-pill bg-gold text-teal text-xs font-semibold px-3.5 py-1.5 cursor-pointer hover:brightness-105"
+          >
+            Open the ledger →
+          </button>
+        </section>
+      </div>
     </div>
   )
 }
 
-function Kpi({ label, value, tone, onClick }: { label: string; value: string; tone: 'leak' | 'win'; onClick?: () => void }) {
-  const Tag = onClick ? 'button' : 'div'
+function PaybackPill({ p }: { p: Proposal }) {
+  if (p.status === 'executed')
+    return <Pill bg="var(--color-positive-tint)" fg="var(--color-positive)" text="active" />
+  if (p.payback_months > 0)
+    return <Pill bg="var(--color-positive-tint)" fg="var(--color-positive)" text={`${p.payback_months.toFixed(1)} mo`} />
+  // no upfront cost: rank by what it nets you every month instead
+  return <Pill bg="var(--color-gold-tint)" fg="var(--color-gold-deep)" text={`net +${brl(p.net_monthly_cents)}`} />
+}
+
+function Pill({ bg, fg, text }: { bg: string; fg: string; text: string }) {
   return (
-    <Tag
-      onClick={onClick}
-      className={`rounded-pill bg-white/60 hairline px-4 py-2.5 flex items-center gap-3 min-w-[210px] text-left ${onClick ? 'cursor-pointer hover:bg-white/90 transition-colors' : ''}`}
-    >
-      <span
-        className="w-2 h-2 rounded-full"
-        style={{ background: tone === 'leak' ? '#a07c12' : '#2e7d32' }}
-        aria-hidden
-      />
-      <div>
-        <div className="text-xs text-ink-secondary leading-none mb-1">{label}</div>
-        <div className="tabular font-semibold leading-none">{value}</div>
-      </div>
-    </Tag>
+    <span className="text-xs font-medium rounded-pill px-2.5 py-1 whitespace-nowrap tabular" style={{ background: bg, color: fg }}>
+      {text}
+    </span>
   )
 }
 
-function ProposalCard({
+function RowAction({
   p,
   onBuy,
   onAsk,
-  onShowLedger,
+  onGo,
 }: {
   p: Proposal
   onBuy: () => void
-  onAsk: (text: string) => void
-  onShowLedger: () => void
+  onAsk: (t: string) => void
+  onGo: (s: Screen) => void
 }) {
-  const title = p.recipe_title || p.recipe_id
-  const executed = p.status === 'executed'
-  const approved = p.status === 'approved'
-  // goal gradient: 2.1 months to break even, bar already moving
-  const paybackPct = p.payback_months <= 0 ? 100 : Math.min(100 / p.payback_months, 92)
+  if (p.status === 'executed')
+    return (
+      <button onClick={() => onGo('ledger')} className="text-positive text-sm font-medium cursor-pointer bg-transparent">
+        Running
+      </button>
+    )
+  if (p.executable)
+    return (
+      <button
+        onClick={onBuy}
+        className={`rounded-pill text-sm font-medium px-4 py-1.5 cursor-pointer w-full ${
+          p.status === 'approved'
+            ? 'bg-gold text-teal hover:brightness-105 pop'
+            : 'bg-gold-tint text-gold-deep hover:bg-gold hover:text-teal transition-colors'
+        }`}
+      >
+        Review
+      </button>
+    )
   return (
-    <div
-      className={`bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-4 flex flex-col gap-2 transition-shadow ${
-        approved ? 'ring-2 ring-sun/70' : ''
-      }`}
+    <button
+      onClick={() => onAsk(`How do I set up "${p.recipe_title}"? Give me the concrete steps.`)}
+      className="rounded-pill border border-line bg-surface text-sm px-4 py-1.5 cursor-pointer hover:bg-gold-tint w-full"
     >
-      <div className="flex items-start justify-between gap-2">
-        <span className="font-medium text-sm">{title}</span>
-        <StatusPill status={p.status} />
-      </div>
-      <div className="text-sm text-ink-secondary">
-        recovers <span className="text-success font-medium tabular">{brl(p.net_monthly_cents)}</span>
-        /month
-      </div>
-      <div>
-        <div className="flex justify-between text-xs text-ink-tertiary mb-1">
-          <span>pays for itself</span>
-          <span className="tabular">{p.payback_months > 0 ? `${p.payback_months.toFixed(1)} months` : 'immediately'}</span>
-        </div>
-        <div className="h-2 rounded-pill bg-[rgba(36,35,33,0.06)] overflow-hidden">
-          <div className="h-full rounded-pill bg-sun" style={{ width: `${paybackPct}%` }} />
-        </div>
-      </div>
-
-      {executed ? (
-        <button
-          onClick={onShowLedger}
-          className="mt-1 text-xs text-success bg-success-tint hover:bg-[#e3f2de] rounded-pill px-3 py-1.5 inline-flex items-center gap-1.5 self-start cursor-pointer"
-        >
-          <span className="w-1.5 h-1.5 rounded-full bg-success" /> purchased via AP2 · receipts on ledger →
-        </button>
-      ) : p.executable ? (
-        <button
-          onClick={onBuy}
-          className={`mt-1 rounded-pill text-sm py-2 cursor-pointer font-medium ${approved ? 'bg-ink text-white pop' : 'bg-ink text-white'}`}
-        >
-          {approved ? 'Review & sign · AP2' : `Let the agent buy it · ${p.payback_months.toFixed(1)}-month payback`}
-        </button>
-      ) : (
-        <button
-          onClick={() => onAsk(`How do I set up "${title}"? Give me the concrete steps.`)}
-          className="mt-1 rounded-pill border-subtle bg-surface-raised text-sm py-2 cursor-pointer hover:bg-sun-soft/40 transition-colors"
-        >
-          {approved ? 'Ask the agent for the steps' : 'Ask the agent how'}
-        </button>
-      )}
-    </div>
-  )
-}
-
-function StatusPill({ status }: { status: Proposal['status'] }) {
-  const map: Record<string, { bg: string; dot: string; label: string }> = {
-    proposed: { bg: 'rgba(36,35,33,0.06)', dot: 'rgba(36,35,33,0.45)', label: 'proposed' },
-    approved: { bg: '#fbf0cc', dot: '#e5b73c', label: 'approved' },
-    executed: { bg: '#eef8ea', dot: '#2e7d32', label: 'done' },
-    declined: { bg: 'rgba(36,35,33,0.06)', dot: 'rgba(36,35,33,0.3)', label: 'declined' },
-  }
-  const s = map[status] ?? map.proposed
-  return (
-    <span
-      className="text-[11px] rounded-pill px-2.5 py-1 inline-flex items-center gap-1.5 shrink-0"
-      style={{ background: s.bg }}
-    >
-      <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.dot }} />
-      {s.label}
-    </span>
+      Review
+    </button>
   )
 }

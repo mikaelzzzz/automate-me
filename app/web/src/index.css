@@ -1,36 +1,51 @@
 @import 'tailwindcss';
 
-/* Crextio Warm Minimal tokens — docs/design/design-system.json.
-   Display numerals get Fraunces (warm editorial serif) so money reads as the
-   hero; UI text stays on Inter per the design system. */
+/* Design tokens — "Command Rail" (wireframe 1a).
+   Deep teal rail, gold accents, warm paper canvas. Fraunces carries every
+   number that means money or time; Inter carries the interface. */
 @theme {
-  --color-canvas: #f6f5f0;
-  --color-surface: #fbfaf6;
-  --color-surface-subtle: #f1eee6;
-  --color-surface-raised: #ffffff;
-  --color-ink: #242321;
-  --color-ink-secondary: #615f5b;
-  --color-ink-tertiary: #7a7772;
-  --color-sun: #f8d973;
-  --color-sun-soft: #f5e6ad;
-  --color-sun-deep: #e5b73c;
-  --color-success: #2e7d32;
-  --color-success-tint: #eef8ea;
-  --color-danger: #b3261e;
-  --color-danger-tint: #fce8e6;
-  /* chart series — validator-approved (six checks PASS on #FBFAF6) */
-  --color-series-gold: #a07c12;
-  --color-series-blue: #2c5fa8;
+  /* surfaces, lightest → warmest */
+  --color-canvas: #f4f0e8;
+  --color-paper: #faf8f4;
+  --color-surface: #fbf9f5;
+  --color-surface-warm: #f5efe6;
+  --color-surface-sunk: #efeae0;
 
-  --font-sans: 'Inter', 'SF Pro Display', system-ui, sans-serif;
+  /* ink */
+  --color-ink: #1a1a1a;
+  --color-ink-secondary: #5b5b5b;
+  --color-ink-tertiary: #9a9a9a;
+
+  /* brand */
+  --color-teal: #13353f;
+  --color-teal-soft: #1c4552;
+  --color-gold: #bc9a75;
+  --color-gold-deep: #8b6b47;
+  --color-gold-tint: #f0e7d9;
+
+  /* semantic */
+  --color-positive: #3f7d58;
+  --color-positive-tint: #eaf1ec;
+  --color-alert: #c9553d;
+  --color-alert-deep: #8a3d2b;
+  --color-alert-tint: #fbede9;
+  --color-alert-line: #f0cfc6;
+
+  --color-line: #e8e2d6;
+  --color-line-strong: #e0d8c8;
+
+  --font-sans: 'Inter', 'SF Pro Text', system-ui, sans-serif;
   --font-display: 'Fraunces', Georgia, serif;
 
-  --radius-pill: 999px;
-  --radius-card: 24px;
-  --radius-row: 18px;
+  --radius-pill: 99px;
+  --radius-card: 14px;
+  --radius-row: 11px;
 
-  --shadow-lift: 0 1px 0 rgba(20, 18, 14, 0.05), 0 8px 24px rgba(20, 18, 14, 0.06);
-  --shadow-float: 0 2px 0 rgba(20, 18, 14, 0.06), 0 16px 40px rgba(20, 18, 14, 0.08);
+  --shadow-lift: 0 1px 2px rgba(19, 53, 63, 0.04), 0 6px 18px rgba(19, 53, 63, 0.05);
+  --shadow-float: 0 2px 6px rgba(19, 53, 63, 0.06), 0 18px 44px rgba(19, 53, 63, 0.1);
+
+  --rail-w: 76px;
+  --agent-w: 348px;
 }
 
 html {
@@ -41,37 +56,44 @@ body {
   margin: 0;
   color: var(--color-ink);
   font-family: var(--font-sans);
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-  /* warm canvas with the right-side sun glow */
-  background:
-    radial-gradient(
-      900px 600px at 85% 20%,
-      rgba(248, 217, 115, 0.55) 0%,
-      rgba(248, 217, 115, 0.18) 35%,
-      rgba(246, 245, 240, 0) 70%
-    ),
-    var(--color-canvas);
-  background-attachment: fixed;
+  background: var(--color-canvas);
   min-height: 100vh;
 }
 
-.hairline {
-  border: 1px solid rgba(36, 35, 33, 0.05);
-}
-.border-subtle {
-  border: 1px solid rgba(36, 35, 33, 0.08);
+/* Fraunces is optical-size aware: large money figures want the display cut. */
+.display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-variation-settings: 'SOFT' 0, 'WONK' 0;
+  letter-spacing: -0.01em;
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
 }
 
-/* focus — warm sun ring, never removed */
+.hairline {
+  border: 1px solid var(--color-line);
+}
+.border-subtle {
+  border: 1px solid var(--color-line);
+}
+
+/* section caption: the small uppercase label above a block */
+.scap {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--color-ink-tertiary);
+}
+
 :focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(248, 217, 115, 0.55);
+  box-shadow: 0 0 0 3px rgba(188, 154, 117, 0.45);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -83,7 +105,6 @@ body {
   }
 }
 
-/* staged page-load reveal */
 @keyframes rise {
   from {
     opacity: 0;
@@ -98,22 +119,39 @@ body {
   animation: rise 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-/* Agent replies: compact markdown inside the chat bubble. */
-.chat-md > :first-child { margin-top: 0; }
-.chat-md > :last-child { margin-bottom: 0; }
-.chat-md p { margin: 0.35rem 0; }
-.chat-md ul { list-style: disc; margin: 0.35rem 0; padding-left: 1.1rem; }
-.chat-md ol { list-style: decimal; margin: 0.35rem 0; padding-left: 1.1rem; }
-.chat-md li { margin: 0.15rem 0; }
-.chat-md strong { font-weight: 600; }
-.chat-md h1, .chat-md h2, .chat-md h3 { font-size: 0.95rem; font-weight: 600; margin: 0.5rem 0 0.25rem; }
-.chat-md code { font-size: 0.8em; background: rgba(36, 35, 33, 0.06); padding: 0.05rem 0.3rem; border-radius: 6px; }
-.chat-md table { font-size: 0.75rem; border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; }
-.chat-md th, .chat-md td { border: 1px solid rgba(36, 35, 33, 0.08); padding: 0.15rem 0.4rem; text-align: left; }
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pop {
+  animation: pop 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
 
-/* --- agent panel ---------------------------------------------------- */
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.chat-item {
+  animation: slide-in 220ms ease-out both;
+}
+
+/* streaming caret on the agent's in-flight reply */
 @keyframes blink {
-  50% { opacity: 0; }
+  50% {
+    opacity: 0;
+  }
 }
 .cursor {
   display: inline-block;
@@ -124,38 +162,30 @@ body {
   background: currentColor;
   animation: blink 1s steps(1) infinite;
 }
+
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 .ring {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 2px solid rgba(36, 35, 33, 0.14);
-  border-top-color: #a07c12;
+  border: 2px solid rgba(19, 53, 63, 0.14);
+  border-top-color: var(--color-gold);
   animation: spin 0.8s linear infinite;
 }
-@keyframes pop {
-  from { opacity: 0; transform: scale(0.97) translateY(4px); }
-  to { opacity: 1; transform: none; }
-}
-.pop {
-  animation: pop 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-@keyframes slide-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
-}
-.chat-item {
-  animation: slide-in 220ms ease-out both;
-}
-.chat-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(36, 35, 33, 0.16) transparent;
-}
+
 @keyframes dots {
-  0%, 80%, 100% { opacity: 0.2; }
-  40% { opacity: 1; }
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
 }
 .dot-typing span {
   display: inline-block;
@@ -163,8 +193,71 @@ body {
   margin-right: 3px;
   animation: dots 1.2s infinite;
 }
-.dot-typing span:nth-child(2) { animation-delay: 0.15s; }
-.dot-typing span:nth-child(3) { animation-delay: 0.3s; }
+.dot-typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.dot-typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.chat-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(19, 53, 63, 0.16) transparent;
+}
+
+/* agent replies: compact markdown inside a narrow rail */
+.chat-md > :first-child {
+  margin-top: 0;
+}
+.chat-md > :last-child {
+  margin-bottom: 0;
+}
+.chat-md p {
+  margin: 0.35rem 0;
+}
+.chat-md ul {
+  list-style: disc;
+  margin: 0.35rem 0;
+  padding-left: 1.1rem;
+}
+.chat-md ol {
+  list-style: decimal;
+  margin: 0.35rem 0;
+  padding-left: 1.1rem;
+}
+.chat-md li {
+  margin: 0.15rem 0;
+}
+.chat-md strong {
+  font-weight: 600;
+}
+.chat-md h1,
+.chat-md h2,
+.chat-md h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0.5rem 0 0.25rem;
+}
+.chat-md code {
+  font-size: 0.8em;
+  background: rgba(19, 53, 63, 0.06);
+  padding: 0.05rem 0.3rem;
+  border-radius: 6px;
+}
+.chat-md table {
+  font-size: 0.75rem;
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.chat-md th,
+.chat-md td {
+  border: 1px solid var(--color-line);
+  padding: 0.15rem 0.4rem;
+  text-align: left;
+}
+
 textarea {
   font: inherit;
   color: inherit;

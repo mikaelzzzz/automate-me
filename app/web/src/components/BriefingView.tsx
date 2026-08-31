@@ -64,7 +64,7 @@ export function BriefingView({ onAsk, version }: { onAsk: (text: string) => void
           </h1>
           {worst && worst.flood_risk !== 'none' && (
             <p className="text-sm mt-1 m-0 text-ink-secondary">
-              <span className={worst.flood_risk === 'alert' ? 'text-danger font-medium' : 'text-[#8a6d0b] font-medium'}>
+              <span className={worst.flood_risk === 'alert' ? 'text-alert font-medium' : 'text-[#8B6B47] font-medium'}>
                 {worst.flood_risk === 'alert' ? 'Flood alert' : 'Flood history'}
               </span>{' '}
               on the way to {worst.event_summary.split(' · ')[0].toLowerCase()} — {worst.flood_detail}.
@@ -75,21 +75,21 @@ export function BriefingView({ onAsk, version }: { onAsk: (text: string) => void
           <button
             onClick={run}
             disabled={running}
-            className="rounded-pill bg-ink text-white text-sm px-4 py-2 cursor-pointer disabled:opacity-60 inline-flex items-center gap-2"
+            className="rounded-pill bg-teal text-white text-sm px-4 py-2 cursor-pointer disabled:opacity-60 inline-flex items-center gap-2"
           >
             {running && <span className="ring" style={{ borderTopColor: '#f8d973' }} />}
             {running ? 'Fanning out route workers…' : data.cards.length ? 'Re-plan the day' : 'Plan my day'}
           </button>
           <button
             onClick={() => onAsk(`Brief me on ${when}: when do I leave, what does traffic cost, and any flood risk?`)}
-            className="rounded-pill border-subtle bg-surface-raised text-sm px-4 py-2 cursor-pointer hover:bg-sun-soft/40"
+            className="rounded-pill border-subtle bg-paper text-sm px-4 py-2 cursor-pointer hover:bg-gold-tint/40"
           >
             Ask the planner
           </button>
         </div>
       </header>
 
-      {error && <div className="bg-danger-tint text-danger rounded-xl px-4 py-3 text-sm">{error}</div>}
+      {error && <div className="bg-alert-tint text-alert rounded-xl px-4 py-3 text-sm">{error}</div>}
 
       {data.cards.length === 0 && !running && (
         <Empty title="Your day, planned before you ask" line="Three appointments seeded for the demo. Plan it and the agent computes departure times from live traffic, weather at departure and flood risk per route." />
@@ -118,13 +118,13 @@ function rank(r?: BriefingCard['flood_risk']) {
 function Card({ c, delay, onBlock }: { c: BriefingCard; delay: number; onBlock: () => void }) {
   const at = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
   const flood = {
-    none: { label: 'no flood history on route', bg: 'rgba(36,35,33,0.05)', color: '#615f5b' },
-    historic: { label: `${c.flood_points} flood point${c.flood_points === 1 ? '' : 's'} on route`, bg: '#fbf0cc', color: '#8a6d0b' },
-    alert: { label: 'flood alert on route', bg: '#fce8e6', color: '#b3261e' },
+    none: { label: 'no flood history on route', bg: 'rgba(19,53,63,0.05)', color: '#615f5b' },
+    historic: { label: `${c.flood_points} flood point${c.flood_points === 1 ? '' : 's'} on route`, bg: '#F0E7D9', color: '#8B6B47' },
+    alert: { label: 'flood alert on route', bg: '#FBEDE9', color: '#C9553D' },
   }[c.flood_risk]
   const written = !!c.calendar_block_id
   return (
-    <article className="bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-5 flex flex-col gap-3 rise" style={{ animationDelay: `${delay}ms` }}>
+    <article className="bg-surface rounded-card hairline shadow-[var(--shadow-lift)] p-5 flex flex-col gap-3 rise" style={{ animationDelay: `${delay}ms` }}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-xs text-ink-tertiary tabular">{at(c.event_start)}</div>
@@ -153,17 +153,17 @@ function Card({ c, delay, onBlock }: { c: BriefingCard; delay: number; onBlock: 
       </div>
 
       {c.alternative_note && (
-        <div className="text-xs bg-sun-soft/50 rounded-xl px-3 py-2">{c.alternative_note}</div>
+        <div className="text-xs bg-gold-tint/50 rounded-xl px-3 py-2">{c.alternative_note}</div>
       )}
 
       <div className="mt-auto pt-1">
         {written ? (
-          <div className="text-xs text-success bg-success-tint rounded-pill px-3 py-1.5 inline-flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-success" /> “Leave at {at(c.departure_time)}” block on calendar
+          <div className="text-xs text-positive bg-positive-tint rounded-pill px-3 py-1.5 inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-positive" /> “Leave at {at(c.departure_time)}” block on calendar
             {c.calendar_block_mode === 'simulated' && <span className="text-ink-tertiary">· simulated</span>}
           </div>
         ) : (
-          <button onClick={onBlock} className="rounded-pill border-subtle bg-surface-raised text-sm px-3.5 py-1.5 cursor-pointer hover:bg-sun-soft/40 transition-colors">
+          <button onClick={onBlock} className="rounded-pill border-subtle bg-paper text-sm px-3.5 py-1.5 cursor-pointer hover:bg-gold-tint/40 transition-colors">
             Write “Leave at {at(c.departure_time)}” to calendar
           </button>
         )}
@@ -173,9 +173,9 @@ function Card({ c, delay, onBlock }: { c: BriefingCard; delay: number; onBlock: 
 }
 
 function Fact({ label, value, span, tone }: { label: string; value: string; span?: boolean; tone?: 'leak' | 'warn' | 'danger' }) {
-  const color = tone === 'leak' ? '#a07c12' : tone === 'danger' ? '#b3261e' : tone === 'warn' ? '#8a6d0b' : undefined
+  const color = tone === 'leak' ? '#BC9A75' : tone === 'danger' ? '#C9553D' : tone === 'warn' ? '#8B6B47' : undefined
   return (
-    <div className={`bg-surface-raised border-subtle rounded-xl px-2.5 py-1.5 ${span ? 'col-span-2' : ''}`}>
+    <div className={`bg-paper border-subtle rounded-xl px-2.5 py-1.5 ${span ? 'col-span-2' : ''}`}>
       <div className="text-[10px] uppercase tracking-[0.06em] text-ink-tertiary">{label}</div>
       <div className="leading-snug" style={{ color }}>{value}</div>
     </div>
@@ -184,7 +184,7 @@ function Fact({ label, value, span, tone }: { label: string; value: string; span
 
 function Empty({ title, line }: { title: string; line: string }) {
   return (
-    <div className="bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-8 max-w-[640px]">
+    <div className="bg-surface rounded-card hairline shadow-[var(--shadow-lift)] p-8 max-w-[640px]">
       <h2 className="m-0 text-lg font-medium">{title}</h2>
       <p className="text-ink-secondary text-sm mt-2 mb-0">{line}</p>
     </div>

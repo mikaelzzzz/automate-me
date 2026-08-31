@@ -32,10 +32,10 @@ export function LedgerView({ entries, onAsk }: { entries: LedgerEntry[]; onAsk: 
 
   if (entries.length === 0) {
     return (
-      <div className="bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-8 max-w-[760px] text-center">
+      <div className="bg-surface rounded-card hairline shadow-[var(--shadow-lift)] p-8 max-w-[760px] text-center">
         <h2 className="m-0 text-lg font-medium">Savings ledger</h2>
         <p className="text-sm text-ink-secondary mt-2 mb-4">Approve your first automation and proof lands here, week by week.</p>
-        <button onClick={() => onAsk('What should I automate first?')} className="rounded-pill bg-ink text-white text-sm px-4 py-2 cursor-pointer">
+        <button onClick={() => onAsk('What should I automate first?')} className="rounded-pill bg-teal text-white text-sm px-4 py-2 cursor-pointer">
           Ask the agent
         </button>
       </div>
@@ -44,7 +44,7 @@ export function LedgerView({ entries, onAsk }: { entries: LedgerEntry[]; onAsk: 
 
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px] max-w-[1040px]">
-      <section className="bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-5 rise">
+      <section className="bg-surface rounded-card hairline shadow-[var(--shadow-lift)] p-5 rise">
         <div className="flex items-baseline justify-between mb-4">
           <h2 className="m-0 text-lg font-medium">Savings ledger</h2>
           <span className="text-xs text-ink-tertiary">weekly · BRL</span>
@@ -57,7 +57,7 @@ export function LedgerView({ entries, onAsk }: { entries: LedgerEntry[]; onAsk: 
             const expanded = purchase && openRef === e.mandate_ref
             const future = new Date(e.week_start).getTime() > Date.now()
             return (
-              <div key={e.id} className={`rounded-row transition-colors ${expanded ? 'bg-sun/10' : 'hover:bg-sun/10'}`}>
+              <div key={e.id} className={`rounded-row transition-colors ${expanded ? 'bg-gold/10' : 'hover:bg-gold/10'}`}>
                 <div className="flex items-center gap-3 px-3 py-2.5 text-sm">
                   <span className="text-ink-tertiary text-xs tabular w-16 shrink-0">
                     {new Date(e.week_start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -75,7 +75,7 @@ export function LedgerView({ entries, onAsk }: { entries: LedgerEntry[]; onAsk: 
                   {purchase && (
                     <button
                       onClick={() => setOpenRef(expanded ? null : e.mandate_ref!)}
-                      className="text-[11px] rounded-pill bg-sun-soft/70 hover:bg-sun-soft px-2.5 py-1 cursor-pointer inline-flex items-center gap-1"
+                      className="text-[11px] rounded-pill bg-gold-tint/70 hover:bg-gold-tint px-2.5 py-1 cursor-pointer inline-flex items-center gap-1"
                       aria-expanded={expanded}
                     >
                       AP2 receipt <span className={`transition-transform ${expanded ? 'rotate-90' : ''}`}>›</span>
@@ -83,7 +83,7 @@ export function LedgerView({ entries, onAsk }: { entries: LedgerEntry[]; onAsk: 
                   )}
                   <span
                     className="text-[11px] rounded-pill px-2 py-0.5 shrink-0"
-                    style={{ background: e.confirmed ? '#eef8ea' : 'rgba(36,35,33,0.06)', color: e.confirmed ? '#2e7d32' : undefined }}
+                    style={{ background: e.confirmed ? '#EAF1EC' : 'rgba(19,53,63,0.06)', color: e.confirmed ? '#3F7D58' : undefined }}
                   >
                     {e.confirmed ? 'confirmed' : 'projected'}
                   </span>
@@ -103,9 +103,9 @@ export function LedgerView({ entries, onAsk }: { entries: LedgerEntry[]; onAsk: 
           })}
         </div>
 
-        <div className="mt-4 pt-3 border-t border-[rgba(36,35,33,0.08)] flex items-center gap-3 text-sm">
+        <div className="mt-4 pt-3 border-t border-[rgba(19,53,63,0.08)] flex items-center gap-3 text-sm">
           <span className="text-ink-secondary flex-1">Bought back so far</span>
-          <span className="tabular font-semibold text-success">{brl(totals.confirmed)}</span>
+          <span className="tabular font-semibold text-positive">{brl(totals.confirmed)}</span>
           <span className="text-ink-tertiary text-xs">· +{brl(totals.projected)} projected</span>
         </div>
       </section>
@@ -114,7 +114,7 @@ export function LedgerView({ entries, onAsk }: { entries: LedgerEntry[]; onAsk: 
         <Stat label="confirmed" value={brl(totals.confirmed)} hint="counted only after the week actually happened" tone="win" />
         <Stat label="projected" value={`+${brl(totals.projected)}`} hint="what approved automations should recover next" />
         <Stat label="hours back" value={`${totals.hrs.toFixed(1)} h`} hint="across every week on the ledger" />
-        <div className="bg-surface/85 rounded-card hairline p-4 text-xs text-ink-secondary leading-relaxed">
+        <div className="bg-surface rounded-card hairline p-4 text-xs text-ink-secondary leading-relaxed">
           Purchases carry the full AP2 trail: two mandates you signed, two receipts the merchant signed. Open one and read it.
         </div>
       </aside>
@@ -124,9 +124,9 @@ export function LedgerView({ entries, onAsk }: { entries: LedgerEntry[]; onAsk: 
 
 function Stat({ label, value, hint, tone }: { label: string; value: string; hint: string; tone?: 'win' }) {
   return (
-    <div className="bg-surface/85 rounded-card hairline shadow-[var(--shadow-lift)] p-4">
+    <div className="bg-surface rounded-card hairline shadow-[var(--shadow-lift)] p-4">
       <div className="text-xs text-ink-secondary">{label}</div>
-      <div className={`tabular font-semibold text-xl leading-tight ${tone === 'win' ? 'text-success' : ''}`} style={{ fontFamily: 'var(--font-display)' }}>
+      <div className={`tabular font-semibold text-xl leading-tight ${tone === 'win' ? 'text-positive' : ''}`} style={{ fontFamily: 'var(--font-display)' }}>
         {value}
       </div>
       <div className="text-[11px] text-ink-tertiary mt-1">{hint}</div>
@@ -158,8 +158,8 @@ function Trail({ rec }: { rec: MandateRecord }) {
   return (
     <div className="grid gap-1.5 sm:grid-cols-2">
       {rows.map((r) => (
-        <div key={r.label} className="flex items-start gap-2 bg-surface-raised border-subtle rounded-xl px-3 py-2 text-xs">
-          <span className="w-2 h-2 rounded-full shrink-0 mt-1" style={{ background: r.ok ? '#2e7d32' : '#b3261e' }} aria-hidden />
+        <div key={r.label} className="flex items-start gap-2 bg-paper border-subtle rounded-xl px-3 py-2 text-xs">
+          <span className="w-2 h-2 rounded-full shrink-0 mt-1" style={{ background: r.ok ? '#3F7D58' : '#C9553D' }} aria-hidden />
           <div className="min-w-0">
             <div className="font-medium">
               {r.label} <span className="text-ink-tertiary font-normal">· {r.by}</span>
