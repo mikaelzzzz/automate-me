@@ -56,13 +56,6 @@ func Seed() []Recipe {
 			Cost:     CostModel{MinutesSavedPerOcc: 15},
 			Triggers: []string{"escola", "school", "bilhete", "reunião de pais"},
 		},
-		{
-			ID: "teams-report", Title: "Team automation report",
-			Description: "Team task list + hourly cost → shareable Automation Opportunities Report.",
-			Class:       ClassExecutable, Capability: CapReportGen,
-			Cost:     CostModel{MinutesSavedPerOcc: 60},
-			Triggers: []string{"equipe", "team", "empresa", "funcionário", "manual"},
-		},
 
 		// --- advised (payback cards; PRD §5.3) ---
 		{

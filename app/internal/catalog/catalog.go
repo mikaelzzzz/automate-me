@@ -17,7 +17,6 @@ const (
 	CapWeatherFlood  Capability = "weather_flood"
 	CapGmailDraft    Capability = "gmail_draft"
 	CapAP2Purchase   Capability = "ap2_purchase"
-	CapReportGen     Capability = "report_gen"
 )
 
 // Class distinguishes how a recipe acts.

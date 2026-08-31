@@ -72,7 +72,7 @@ The loop is *Proof of Time*: capture → price → rank → execute → prove.
    with you before saving anything.
 2. **Price.** A deterministic Go Value Engine computes the *Cost of Inaction*:
    `minutes × times per month × your hourly rate`. **No LLM ever produces a money figure.**
-3. **Rank.** Routines are matched against a 26-recipe catalog (9 executable, 8 advised, 9
+3. **Rank.** Routines are matched against a 25-recipe catalog (8 executable, 8 advised, 9
    roadmap) and ranked by payback. Negative-net automations are never proposed.
 4. **Execute — and, under a signed envelope, without being asked.** You sign one **Spending
    Authorization** up front: a standing delegation with a per-purchase cap, a merchant

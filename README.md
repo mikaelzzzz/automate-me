@@ -23,7 +23,7 @@ The loop is **Proof of Time**: capture → price → rank → **execute** → pr
 
 1. **Capture.** Tell the agent your routine in chat, or **photograph** a handwritten list, a pile of boletos, a school note. Gemini reads the pixels; the analyst confirms the numbers with you before saving.
 2. **Price.** A deterministic Go **Value Engine** computes the *Cost of Inaction*: `minutes × times/month × your hourly rate`. **No LLM ever produces a money figure.**
-3. **Rank.** Routines are matched against a 26-recipe catalog (9 executable, 8 advised, 9 roadmap) and ranked by payback. Negative-net automations are never proposed.
+3. **Rank.** Routines are matched against a 25-recipe catalog (8 executable, 8 advised, 9 roadmap) and ranked by payback. Negative-net automations are never proposed.
 4. **Execute.** With explicit approval the agent acts: buys a dishwasher over AP2, plans the day from live traffic, writes departure blocks to the calendar.
 5. **Prove.** The Savings Ledger accumulates hours and R$ bought back, with the signed AP2 receipts attached to each purchase.
 
@@ -279,7 +279,7 @@ Money is integer centavos everywhere, tested table-driven. The agent graph, the 
 
 ## Deliberate limits
 
-Payment **settlement** is simulated (the protocol is not). State is in memory behind a `Store` interface, so a single instance per service. Calendar writes fall back to simulated unless a calendar is shared with the runtime identity. Demo appointments are seeded rather than read from a real calendar — the Calendar Watcher is scoped as post-hackathon, along with the Plan Guardian, Teams report, voice I/O, and Open Finance.
+Payment **settlement** is simulated (the protocol is not). State is in memory behind a `Store` interface, so a single instance per service. Calendar writes fall back to simulated unless a calendar is shared with the runtime identity. Demo appointments are seeded rather than read from a real calendar — the Calendar Watcher is scoped as post-hackathon, along with the Plan Guardian and Open Finance. The team automation report was cut rather than deferred — it claimed to be executable while nothing executed it.
 
 ---
 
