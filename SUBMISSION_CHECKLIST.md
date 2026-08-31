@@ -53,21 +53,20 @@ Upload public to YouTube (not "unlisted" if the form asks for public).
 
 ## 5. Code repo linked, access granted if private
 
-❌ **BLOCKER — there is no git remote.** `git remote -v` is empty; the repo exists only on
-this machine. Nothing is pushed anywhere, so there is no URL to submit.
+✅ **Done — 2026-08-31.** https://github.com/mikaelzzzz/automate-me — **public**, default
+branch `main`, 95 files, MIT licensed.
 
-Fix (choose public — it removes the access-grant requirement entirely):
+Pre-flight run before publishing: full working tree *and* complete git history scanned for
+Google API keys, GitHub tokens, private-key blocks, AWS keys and Slack tokens — all clean.
+`.env` is gitignored and only `.env.example` (empty placeholders) is tracked. `node_modules/`
+and `app/web/dist/` did not leak.
 
-```bash
-gh repo create automate-me --public --source=. --remote=origin --push
-```
+Public means the access grants to `testing@devpost.com` and `cloudhackathons@google.com` are
+not required.
 
-If it must be private, then after creating it, grant read access to **both**:
-- `testing@devpost.com`
-- `cloudhackathons@google.com`
-
-Before pushing, note that `app/web/dist/` and `node_modules/` are gitignored — good — and
-`.env` is gitignored while `.env.example` is kept. No secrets were found in tracked files.
+⚠️ **The other session's uncommitted UI work is not on the remote yet.** Remote `main` is the
+audited code at `759c1e3` plus the two documentation commits. See "After the design session
+lands" at the bottom of this file.
 
 ---
 
@@ -114,9 +113,8 @@ right before submitting so the first judge does not eat the cold start.
 
 ## 9. Text description — features, technologies, data sources, learnings
 
-⚠️ **Not written as a submission text.** The raw material is all in `README.md` and `PRD.md`,
-but the Devpost description field is separate and must be pasted in. The four required
-angles, with what to say:
+⚠️ **Written, not yet submitted.** The full text is ready to copy in `SUBMISSION_ANSWERS.md`.
+Summary of the four required angles:
 
 **Features.** Capture a routine by chat or photo → deterministic Value Engine prices the Cost
 of Inaction (`minutes × times/month × hourly rate`, never LLM-generated) → 26-recipe catalog
@@ -142,8 +140,8 @@ path can reach; and the reason a money figure never comes from the model.
 
 ## 10. Pre-existing / third-party code disclosure
 
-⚠️ **Not written, and there is no LICENSE file.** Nothing in the repo is copied code, but the
-form asks for a positive statement. Suggested answer:
+⚠️ **Written, not yet submitted.** Nothing in the repo is copied code. Paste this (also in
+`SUBMISSION_ANSWERS.md`):
 
 > All application code was written during the submission period, starting 2026-08-14. No
 > pre-existing codebase was reused. Third-party dependencies are all open-source libraries
@@ -152,7 +150,7 @@ form asks for a positive statement. Suggested answer:
 > and Tailwind CSS 4. The AP2 v0.2 and A2A v1.0.1 protocol implementations in `ap2core/` and
 > `merchant/` are our own, written against the public specifications.
 
-Optional, 30 seconds: add a `LICENSE` (Apache-2.0 or MIT) at the repo root before pushing.
+✅ `LICENSE` (MIT) added at the repo root and pushed.
 
 ---
 
@@ -185,11 +183,25 @@ Record in short clips so one bad take does not cost the whole video.
 
 ## Do this in order
 
-1. **Push the repo.** `gh repo create automate-me --public --source=. --remote=origin --push` — nothing can be submitted without a repo URL. *(§5)*
-2. **Warm the live URL** and confirm it still returns 200. *(§7)*
+1. ~~Push the repo.~~ ✅ done — https://github.com/mikaelzzzz/automate-me *(§5)*
+2. ~~Warm the live URL.~~ ✅ done — HTTP 200 in 0.39 s *(§7)*
 3. **Record the video** per §12, upload public to YouTube. *(§4)*
-4. **Paste the description** from §9 and the disclosure from §10 into the form. *(§9, §10)*
+4. **Paste the description and the disclosure** into the form — all of it is written out
+   ready to copy in `SUBMISSION_ANSWERS.md`. *(§9, §10)*
 5. **Upload** `docs/design/architecture.png` to the gallery. *(§6)*
 6. **Select Track 1 — Taskmaster**, answer SDK = ADK Go v2.2.0, start date = 2026-08-14. *(§2, §8)*
 7. Confirm teammate invitations are accepted. *(§3)*
-8. If there is time left: LICENSE file, social post. *(§10, §11)*
+8. If there is time left: the social post — text is drafted in `SUBMISSION_ANSWERS.md`. *(§11)*
+
+---
+
+## After the design session lands
+
+Remote `main` is two documentation commits **ahead** of your local `main`. When the UI work is
+committed, merge before pushing or the push is rejected as non-fast-forward:
+
+```bash
+git fetch origin
+git merge origin/main     # brings in LICENSE + the two submission docs
+git push origin main
+```
