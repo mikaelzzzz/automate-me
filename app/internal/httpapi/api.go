@@ -44,6 +44,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /app/api/briefing/{id}/block", h.briefingBlock)
 	mux.HandleFunc("POST /app/api/live/session", h.liveSession)
 	mux.HandleFunc("POST /app/api/live/tool", h.liveTool)
+	mux.HandleFunc("POST /app/api/live/remember", h.liveRemember)
 }
 
 type briefingResponse struct {

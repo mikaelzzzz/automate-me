@@ -50,11 +50,19 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
   const scroller = useRef<HTMLDivElement>(null)
   // Named by the server, so the page never claims a model it is not using.
   const [models, setModels] = useState({ voice: 'gemini-3.1-flash-live-preview', reasoning: 'gemini-3.5-flash' })
+  // What the agent walks into the call already knowing. Recalled server-side
+  // from Memory Bank and injected into this session's instruction; shown here
+  // so the caller can see it rather than be surprised by it.
+  const [memories, setMemories] = useState<string[]>([])
+  const [showMemories, setShowMemories] = useState(false)
 
   useEffect(() => {
     fetch('/app/api/live/session', { method: 'POST' })
       .then((r) => r.json())
-      .then((c) => c?.model && setModels({ voice: c.model, reasoning: c.reasoning_model ?? 'gemini-3.5-flash' }))
+      .then((c) => {
+        if (c?.model) setModels({ voice: c.model, reasoning: c.reasoning_model ?? 'gemini-3.5-flash' })
+        if (Array.isArray(c?.memories)) setMemories(c.memories as string[])
+      })
       .catch(() => {})
   }, [])
 
@@ -113,7 +121,25 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
     await session.current?.stop()
     session.current = null
     setMuted(false)
-  }, [])
+    // Hand the call to Memory Bank: the Live API keeps its turns in this tab,
+    // so this is how a spoken conversation reaches the same memory the typed
+    // one writes to. Best effort — a failed save must not break ending a call.
+    const spoken = turns.flatMap((t) =>
+      (t.kind === 'you' || t.kind === 'agent') && t.text.trim()
+        ? [{ role: t.kind === 'you' ? 'user' : 'model', text: t.text.trim() }]
+        : [],
+    )
+    if (spoken.length === 0) return
+    try {
+      await fetch('/app/api/live/remember', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ turns: spoken }),
+      })
+    } catch {
+      /* the conversation still happened; the memory of it is not worth an error banner */
+    }
+  }, [turns])
 
   useEffect(() => () => void session.current?.stop(), [])
 
@@ -138,6 +164,26 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
             {models.reasoning}. It can capture, price, rank, approve and plan — it cannot buy anything.
           </p>
         </div>
+
+        {memories.length > 0 && (
+          <div className="mt-3">
+            <button
+              onClick={() => setShowMemories((v) => !v)}
+              className="rounded-pill border-subtle bg-gold-tint/50 text-xs px-3 py-1.5 cursor-pointer hover:bg-gold-tint inline-flex items-center gap-2"
+            >
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#BC9A75' }} />
+              It starts this call remembering {memories.length} thing{memories.length === 1 ? '' : 's'} about you
+              <span className="text-ink-tertiary">{showMemories ? '▴' : '▾'}</span>
+            </button>
+            {showMemories && (
+              <ul className="mt-2 mb-0 pl-4 text-xs text-ink-secondary space-y-1">
+                {memories.map((m) => (
+                  <li key={m}>{m}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         <section className="mt-3 bg-teal rounded-card px-5 py-4 text-white flex items-center gap-5">
           <div className="min-w-0 flex-1">

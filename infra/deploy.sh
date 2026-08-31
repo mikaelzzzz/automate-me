@@ -5,6 +5,11 @@
 #   ONLY=app ./infra/deploy.sh   |   ONLY=merchant ./infra/deploy.sh
 #   SKIP_BUILD=1 ./infra/deploy.sh                          # redeploy last built tag
 #
+# Long-term memory (Vertex AI Agent Engine Memory Bank):
+#   MEMORY_ENGINE=<reasoning engine id> ./infra/deploy.sh
+# infra/gcp-setup.sh creates the engine and prints its id; the value is carried
+# over from the running service when not passed.
+#
 # Real calendar (Daily Briefing reads the day and writes departure blocks):
 #   CALENDAR_ID=you@example.com,c_personal@group.calendar.google.com \
 #   HOME_ADDRESS="Rua X 100, São Paulo" ./infra/deploy.sh
@@ -26,6 +31,7 @@ ONLY="${ONLY:-}"
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.5-flash}"
 CALENDAR_ID="${CALENDAR_ID:-}"
 HOME_ADDRESS="${HOME_ADDRESS:-}"
+MEMORY_ENGINE="${MEMORY_ENGINE:-}"
 
 if [[ "$PROJECT_ID" == "ecosistema-karol-prod" ]]; then
   echo "refusing to deploy to ecosistema-karol-prod" >&2
@@ -75,9 +81,17 @@ if [[ -z "$ONLY" || "$ONLY" == app ]]; then
   }
   [[ -n "$CALENDAR_ID" ]] || CALENDAR_ID="$(current_env CALENDAR_ID)"
   [[ -n "$HOME_ADDRESS" ]] || HOME_ADDRESS="$(current_env HOME_ADDRESS)"
+  [[ -n "$MEMORY_ENGINE" ]] || MEMORY_ENGINE="$(current_env MEMORY_ENGINE)"
   # ^@^ delimiter: addresses contain commas.
-  # FIRESTORE_PROJECT switches ADK sessions from memory to Firestore.
+  # FIRESTORE_PROJECT switches ADK sessions from memory to Firestore;
+  # MEMORY_ENGINE switches long-term memory on (Agent Engine Memory Bank).
   APP_ENV="^@^MERCHANT_URL=$MERCHANT_URL@MERCHANT_AUTH=idtoken@DEMO_MODE=seed@GEMINI_MODEL=$GEMINI_MODEL@FIRESTORE_PROJECT=${FIRESTORE_PROJECT:-$PROJECT_ID}"
+  if [[ -n "$MEMORY_ENGINE" ]]; then
+    APP_ENV="$APP_ENV@MEMORY_ENGINE=$MEMORY_ENGINE@MEMORY_PROJECT=$PROJECT_ID@MEMORY_LOCATION=$REGION"
+    echo "memory: agent engine $MEMORY_ENGINE"
+  else
+    echo "memory: none — the agent starts every conversation as a stranger"
+  fi
   if [[ -n "$CALENDAR_ID" ]]; then
     APP_ENV="$APP_ENV@CALENDAR_ID=$CALENDAR_ID"
     [[ -n "$HOME_ADDRESS" ]] && APP_ENV="$APP_ENV@HOME_ADDRESS=$HOME_ADDRESS"

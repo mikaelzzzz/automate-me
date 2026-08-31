@@ -6,14 +6,21 @@ package agents
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
+	"google.golang.org/adk/v2/tool/loadmemorytool"
+	"google.golang.org/adk/v2/tool/preloadmemorytool"
+	"google.golang.org/genai"
 
 	"automate-me/app/internal/briefing"
+	"automate-me/app/internal/memorybank"
 	"automate-me/app/internal/store"
 )
 
@@ -29,6 +36,14 @@ type Deps struct {
 	// Events is where the day's appointments come from: the connected Google
 	// Calendar, or the seeded São Paulo day when none is.
 	Events briefing.EventSource
+	// Memory is Vertex AI Memory Bank when configured: what the agent knows
+	// about this person from earlier conversations. Nil disables recall and
+	// the memory tools.
+	Memory *memorybank.Service
+	// Sessions is the session store the graph runs on. The after-turn
+	// callback needs it: a callback context exposes the session's identity
+	// but not the session itself.
+	Sessions session.Service
 	// Consult runs the agent graph (Gemini 3.5 Flash) for the voice session.
 	// Set after the graph is built, since it closes over the runner.
 	Consult func(ctx context.Context, userID, question string) (Consultation, error)
@@ -307,13 +322,58 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 		return nil, err
 	}
 
+	// Memory: preload_memory puts what we already know about this person in
+	// front of the model on every request; load_memory lets it go looking.
+	// The after-run callback hands the finished turn to Memory Bank, which
+	// decides which facts are durable.
+	var memTools []tool.Tool
+	var afterRun []agent.AfterAgentCallback
+	instruction := "You are Automate.me. Goal: find where the user leaks time, price it in BRL, and automate the worst leaks. Delegate routine capture (text or photos of lists, calendars, boletos, notes) to routine_analyst, recommendations to automation_advisor, and anything about today's/tomorrow's schedule, commute, departure times, traffic, weather or floods to day_planner. Be concise and concrete; lead with numbers the tools return. Everything monetary comes from tools, never from you."
+	if d.Memory != nil {
+		memTools = []tool.Tool{preloadmemorytool.New(), loadmemorytool.New()}
+		afterRun = []agent.AfterAgentCallback{d.rememberTurn}
+		instruction += " You remember this person between conversations: use what you already know about their routine, constraints and preferences instead of asking again, and say what you remember out loud when it changes your answer. Never invent a memory."
+	}
+
 	return llmagent.New(llmagent.Config{
-		Name:        "automate_me",
-		Description: "Automate.me orchestrator: finds where the user's life leaks time, prices it, and coordinates automation.",
-		Model:       llm,
-		Instruction: "You are Automate.me. Goal: find where the user leaks time, price it in BRL, and automate the worst leaks. Delegate routine capture (text or photos of lists, calendars, boletos, notes) to routine_analyst, recommendations to automation_advisor, and anything about today's/tomorrow's schedule, commute, departure times, traffic, weather or floods to day_planner. Be concise and concrete; lead with numbers the tools return. Everything monetary comes from tools, never from you." + style,
-		SubAgents:   []agent.Agent{analyst, advisor, planner},
+		Name:                "automate_me",
+		Description:         "Automate.me orchestrator: finds where the user's life leaks time, prices it, and coordinates automation.",
+		Model:               llm,
+		Instruction:         instruction + style,
+		SubAgents:           []agent.Agent{analyst, advisor, planner},
+		Tools:               memTools,
+		AfterAgentCallbacks: afterRun,
 	})
+}
+
+// rememberTurn hands the conversation so far to Memory Bank, which decides
+// which facts are durable. It runs after every turn — the service consolidates
+// rather than duplicating — detached from the request, so remembering never
+// delays the answer and a failure never costs the user their reply.
+//
+// A callback context refuses Session() and Memory(); it does give the identity
+// triple, so the session is fetched from the store instead.
+func (d Deps) rememberTurn(ctx agent.Context) (*genai.Content, error) {
+	if d.Memory == nil || d.Sessions == nil {
+		return nil, nil
+	}
+	app, user, id := ctx.AppName(), ctx.UserID(), ctx.SessionID()
+	bg := context.WithoutCancel(ctx)
+	go func() {
+		bg, cancel := context.WithTimeout(bg, 30*time.Second)
+		defer cancel()
+		res, err := d.Sessions.Get(bg, &session.GetRequest{AppName: app, UserID: user, SessionID: id})
+		if err != nil {
+			slog.Warn("memory: could not read the session to remember it", "session", id, "err", err)
+			return
+		}
+		if err := d.Memory.AddSessionToMemory(bg, res.Session); err != nil {
+			slog.Warn("memory: could not store this turn", "session", id, "err", err)
+			return
+		}
+		slog.Info("memory: turn handed to Memory Bank", "session", id, "user", user)
+	}()
+	return nil, nil
 }
 
 func sanitize(s string) string {

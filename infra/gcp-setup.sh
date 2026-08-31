@@ -228,8 +228,35 @@ gcloud firestore databases describe --database='(default)' --project="$PROJECT_I
   || gcloud firestore databases create --database='(default)' --project="$PROJECT_ID" \
        --location="${FIRESTORE_LOCATION:-nam5}" --type=firestore-native --quiet
 
+# ----------------------------------------------------------- Memory Bank ---
+# One Agent Engine instance holds the agent's long-term memory (facts about the
+# user, scoped per user_id). No code is deployed to it — Memory Bank is used on
+# its own, from Cloud Run, through internal/memorybank.
+log "Agent Engine (Memory Bank)"
+AE_API="https://$REGION-aiplatform.googleapis.com/v1beta1/projects/$PROJECT_ID/locations/$REGION/reasoningEngines"
+AE_TOKEN="$(gcloud auth print-access-token)"
+MEMORY_ENGINE="$(curl -sf "$AE_API" -H "Authorization: Bearer $AE_TOKEN" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next((e["name"].rsplit("/",1)[1] for e in d.get("reasoningEngines",[]) if e.get("displayName")=="automate-me-memory"), ""))' 2>/dev/null || true)"
+if [[ -z "$MEMORY_ENGINE" ]]; then
+  curl -sf -X POST "$AE_API" -H "Authorization: Bearer $AE_TOKEN" -H "Content-Type: application/json" \
+    -d '{"displayName":"automate-me-memory","description":"Memory Bank for Automate.me: what the agent remembers about each user"}' >/dev/null
+  # Creation is a long-running operation; the instance shows up in seconds.
+  for _ in $(seq 1 20); do
+    sleep 5
+    MEMORY_ENGINE="$(curl -sf "$AE_API" -H "Authorization: Bearer $AE_TOKEN" \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next((e["name"].rsplit("/",1)[1] for e in d.get("reasoningEngines",[]) if e.get("displayName")=="automate-me-memory"), ""))' 2>/dev/null || true)"
+    [[ -n "$MEMORY_ENGINE" ]] && break
+  done
+fi
+# Memory Bank generates and embeds facts as its own service agent, which needs
+# to call the embedding and extraction models.
+retry 8 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:service-$PROJECT_NUMBER@gcp-sa-aiplatform-re.iam.gserviceaccount.com" \
+  --role=roles/aiplatform.user --condition=None --quiet >/dev/null
+
 cat <<MSG
 
 ready: $PROJECT_ID (number $PROJECT_NUMBER, region $REGION)
-next:  GCP_PROJECT=$PROJECT_ID REGION=$REGION ./infra/deploy.sh
+memory: agent engine ${MEMORY_ENGINE:-<creation pending — re-run this script>}
+next:  GCP_PROJECT=$PROJECT_ID REGION=$REGION MEMORY_ENGINE=$MEMORY_ENGINE ./infra/deploy.sh
 MSG

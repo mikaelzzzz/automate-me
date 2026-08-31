@@ -2,13 +2,16 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"google.golang.org/genai"
 
 	"automate-me/app/internal/agents"
+	"automate-me/app/internal/memorybank"
 )
 
 // Live voice: the browser holds the microphone and talks straight to the
@@ -37,6 +40,9 @@ type LiveDeps struct {
 	// ReasoningModel is the model behind the agent graph the voice delegates
 	// to — surfaced so the UI can name the whole chain honestly.
 	ReasoningModel string
+	// Memory recalls what earlier conversations taught us about this person,
+	// and stores what this one does. Nil disables both.
+	Memory *memorybank.Service
 }
 
 type liveSessionResponse struct {
@@ -49,6 +55,26 @@ type liveSessionResponse struct {
 	Tools             []map[string]any `json:"tools,omitempty"`
 	ReasoningModel    string           `json:"reasoning_model,omitempty"`
 	Reason            string           `json:"reason,omitempty"`
+	// Memories are the facts injected into this session's instruction, echoed
+	// so the UI can show the caller what the agent walked in knowing.
+	Memories []string `json:"memories,omitempty"`
+}
+
+// recallQuery is what the voice session asks its memory before the call: the
+// standing facts that change how the agent should talk to this person.
+const recallQuery = "the user's routine, constraints, household, work and how they prefer the agent to talk to them"
+
+// memoryPreamble frames recalled facts for the Live model. Fenced and named,
+// so the model treats them as background it already knows rather than as
+// something the caller just said.
+func memoryPreamble(facts []string) string {
+	var b strings.Builder
+	b.WriteString("\n\nWHAT YOU ALREADY KNOW ABOUT THIS PERSON (from earlier conversations; never read this list aloud verbatim, and never invent additions):\n")
+	for _, f := range facts {
+		fmt.Fprintf(&b, "- %s\n", f)
+	}
+	b.WriteString("Use it to skip questions they have already answered and to match their preferences. If something here contradicts what they say now, believe them, not the note.")
+	return b.String()
 }
 
 func (h *Handler) liveSession(w http.ResponseWriter, r *http.Request) {
@@ -79,9 +105,26 @@ func (h *Handler) liveSession(w http.ResponseWriter, r *http.Request) {
 			decls = append(decls, t.Declaration)
 		}
 	}
+
+	// Recall before the first word: the Live session has no history of its
+	// own, so what the agent remembers has to travel in the instruction.
+	instruction := h.Live.SystemInstruction
+	var facts []string
+	if h.Live.Memory != nil {
+		var err error
+		if facts, err = h.Live.Memory.Recall(r.Context(), h.UserID(r), recallQuery); err != nil {
+			// A cold memory is not a broken call.
+			slog.Warn("memory recall failed; starting the call without it", "err", err)
+		} else if len(facts) > 0 {
+			instruction += memoryPreamble(facts)
+			slog.Info("live session recalled memories", "count", len(facts))
+		}
+	}
+
 	writeJSON(w, http.StatusOK, liveSessionResponse{
 		Available: true, Token: tok.Name, Model: h.Live.Model, Voice: h.Live.Voice,
-		ReasoningModel: h.Live.ReasoningModel, SystemInstruction: h.Live.SystemInstruction, Tools: decls,
+		ReasoningModel: h.Live.ReasoningModel, SystemInstruction: instruction, Tools: decls,
+		Memories: facts,
 	})
 }
 
@@ -121,4 +164,37 @@ func (h *Handler) liveTool(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("live tool", "tool", req.Name, "took", time.Since(started).Round(time.Millisecond))
 	writeJSON(w, http.StatusOK, liveToolResponse{Name: req.Name, Result: res})
+}
+
+type liveRememberRequest struct {
+	Turns []struct {
+		Role string `json:"role"`
+		Text string `json:"text"`
+	} `json:"turns"`
+}
+
+// liveRemember takes the transcript of a finished call and hands it to Memory
+// Bank. The Live API keeps its turns in the browser, so this is the only way
+// a spoken conversation reaches the same memory the typed one writes to.
+func (h *Handler) liveRemember(w http.ResponseWriter, r *http.Request) {
+	if h.Live.Memory == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"stored": false, "reason": "memory is not configured"})
+		return
+	}
+	var req liveRememberRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	t := memorybank.Transcript{UserID: h.UserID(r)}
+	for _, turn := range req.Turns {
+		t.Turns = append(t.Turns, memorybank.Turn{Role: turn.Role, Text: turn.Text})
+	}
+	if err := h.Live.Memory.AddTranscript(r.Context(), t); err != nil {
+		slog.Warn("memory: could not store the call", "err", err)
+		writeJSON(w, http.StatusOK, map[string]any{"stored": false, "reason": err.Error()})
+		return
+	}
+	slog.Info("memory: call stored", "turns", len(t.Turns))
+	writeJSON(w, http.StatusOK, map[string]any{"stored": true, "turns": len(t.Turns)})
 }

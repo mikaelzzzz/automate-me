@@ -15,6 +15,7 @@ import (
 	_ "time/tzdata" // distroless has no zoneinfo; the briefing needs America/Sao_Paulo
 
 	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/model/gemini"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/server/adkrest"
@@ -25,6 +26,7 @@ import (
 	"automate-me/app/internal/briefing"
 	"automate-me/app/internal/fsession"
 	"automate-me/app/internal/httpapi"
+	"automate-me/app/internal/memorybank"
 	"automate-me/app/internal/proposer"
 	"automate-me/app/internal/shopping"
 	"automate-me/app/internal/store"
@@ -89,16 +91,25 @@ func main() {
 		slog.Warn("MAPS_API_KEY not set; daily briefing disabled")
 	}
 
-	// Voice: the browser streams audio straight to the Gemini Live API and
-	// posts the model's function calls back to us, where they run the same
-	// tools the ADK graph runs.
-	deps := agents.Deps{
-		Store:    st,
-		UserID:   func(agent.Context) string { return store.DemoUserID },
-		Briefing: planner,
-		Blocks:   blocks,
-		Events:   events,
+	// Memory: Vertex AI Agent Engine Memory Bank, one scope per user. What the
+	// agent learns in a typed chat is what the voice session recalls, and the
+	// other way round. Absent MEMORY_ENGINE, the agent starts every
+	// conversation as a stranger.
+	var mem *memorybank.Service
+	if engine := os.Getenv("MEMORY_ENGINE"); engine != "" {
+		project := cmp.Or(os.Getenv("MEMORY_PROJECT"), os.Getenv("FIRESTORE_PROJECT"))
+		location := cmp.Or(os.Getenv("MEMORY_LOCATION"), "us-central1")
+		m, err := memorybank.New(ctx, project, location, engine)
+		if err != nil {
+			log.Fatalf("memory bank: %v", err)
+		}
+		defer m.Close()
+		mem = m
+		slog.Info("memory bank enabled", "engine", m.Parent())
+	} else {
+		slog.Warn("MEMORY_ENGINE not set; the agent remembers nothing between sessions")
 	}
+
 	// Sessions: Firestore when configured, so a conversation survives the
 	// revision that hosted it; in-memory otherwise.
 	sessions := session.InMemoryService()
@@ -114,9 +125,28 @@ func main() {
 	}
 	slog.Info("agent sessions", "store", sessionStore)
 
+	// Voice: the browser streams audio straight to the Gemini Live API and
+	// posts the model's function calls back to us, where they run the same
+	// tools the ADK graph runs.
+	deps := agents.Deps{
+		Store:    st,
+		UserID:   func(agent.Context) string { return store.DemoUserID },
+		Briefing: planner,
+		Blocks:   blocks,
+		Events:   events,
+		Memory:   mem,
+		Sessions: sessions,
+	}
+
 	// Build the graph first: the voice tools delegate into it, so it has to
 	// exist before the live tool set is frozen.
-	consult, err := mountChat(ctx, mux, deps, sessions)
+	// A typed-nil *memorybank.Service would satisfy memory.Service and then
+	// fail on every call; hand over an interface that is genuinely nil.
+	var memSvc memory.Service
+	if mem != nil {
+		memSvc = mem
+	}
+	consult, err := mountChat(ctx, mux, deps, sessions, memSvc)
 	if err != nil {
 		// Dashboard + consent must come up even without a model key.
 		slog.Warn("chat API disabled (no model?)", "err", err)
@@ -135,6 +165,7 @@ func main() {
 		Voice:             cmp.Or(os.Getenv("LIVE_VOICE"), "Zephyr"),
 		ReasoningModel:    graphModel(),
 		SystemInstruction: agents.LiveSystemInstruction,
+		Memory:            mem,
 	}
 	if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
 		gc, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: key, Backend: genai.BackendGeminiAPI})
@@ -180,7 +211,7 @@ func graphModel() string { return cmp.Or(os.Getenv("GEMINI_MODEL"), "gemini-3.5-
 // mountChat builds the agent graph, serves it over adkrest for the typed chat,
 // and returns a closure that runs the same graph one question at a time — the
 // voice session's route into Gemini 3.5 Flash.
-func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps, sessions session.Service) (
+func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps, sessions session.Service, mem memory.Service) (
 	func(context.Context, string, string) (agents.Consultation, error), error,
 ) {
 	model := graphModel()
@@ -195,6 +226,7 @@ func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps, sessions 
 	srv, err := adkrest.NewServer(adkrest.ServerConfig{
 		AgentLoader:     agent.NewSingleLoader(root),
 		SessionService:  sessions,
+		MemoryService:   mem,
 		SSEWriteTimeout: 120 * time.Second,
 	})
 	if err != nil {
@@ -206,6 +238,7 @@ func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps, sessions 
 		AppName:           "automate_me_live",
 		Agent:             root,
 		SessionService:    sessions,
+		MemoryService:     mem,
 		AutoCreateSession: true,
 	})
 	if err != nil {
