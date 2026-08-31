@@ -29,8 +29,10 @@ The loop is **Proof of Time**: capture → price → rank → **execute** → pr
 
 ### Three things worth looking at
 
-**You can just talk to it.** The mic in the agent rail opens a [Gemini Live
-API](https://ai.google.dev/gemini-api/docs/live) session: the browser streams
+**You can just talk to it.** The **Talk** tab is a live call — a
+[Gemini Live API](https://ai.google.dev/gemini-api/docs/live) session with a
+waveform drawn from the real audio on both ends, so you can see who has the
+floor: the browser streams
 microphone audio straight to Gemini over a WebSocket and hears a spoken reply
 back, while the model's function calls come home to `/app/api/live/tool` and run
 **the same tools the ADK graph runs** — same Value Engine, same store, same

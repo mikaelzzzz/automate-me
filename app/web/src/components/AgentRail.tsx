@@ -11,13 +11,12 @@ import {
 import type { Proposal } from '../lib/api'
 import { brl } from '../lib/api'
 import type { Activity } from '../lib/activity'
-import { LiveVoice, type LiveEvent, type LiveState } from '../lib/live'
 
 // The right rail: what the agent has been doing, and the way you talk to it.
 // Derived activity seeds the timeline; live tool calls, hand-overs and
 // actionable result cards append to the same column as you converse.
 
-export type Screen = 'pnl' | 'briefing' | 'proposals' | 'ledger' | 'teams' | 'guardian'
+export type Screen = 'pnl' | 'live' | 'briefing' | 'proposals' | 'ledger' | 'teams' | 'guardian'
 
 export interface AgentHandle {
   send: (text: string) => void
@@ -59,7 +58,6 @@ type Item =
   | { id: number; kind: 'purchase'; title: string; total: number; mandateRef: string }
   | { id: number; kind: 'confirm'; pending: PendingConfirmation }
   | { id: number; kind: 'error'; text: string }
-  | { id: number; kind: 'live-user'; text: string; open: boolean }
 
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never
 type NewItem = DistributiveOmit<Item, 'id'>
@@ -112,27 +110,11 @@ function closeStreaming(items: Item[]): Item[] {
 
 const BASE_PROMPTS = ['What should I automate first?', 'Brief me on my day', 'I wash dishes an hour a day']
 
-const VOICE_LABEL: Record<LiveState, string> = {
-  idle: '',
-  connecting: 'connecting the voice session…',
-  listening: 'listening — just talk',
-  thinking: 'running your tools…',
-  speaking: 'speaking',
-}
-
 function MicGlyph({ size = 15 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
       <rect x="9" y="2" width="6" height="11" rx="3" />
       <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-    </svg>
-  )
-}
-
-function StopGlyph() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-      <rect x="5" y="5" width="14" height="14" rx="3" />
     </svg>
   )
 }
@@ -172,9 +154,6 @@ export function AgentRail({
   const textarea = useRef<HTMLTextAreaElement>(null)
   const callArgs = useRef<Record<string, Record<string, unknown>>>({})
   const seenResults = useRef<Set<string>>(new Set())
-  const [voiceState, setVoiceState] = useState<LiveState>('idle')
-  const [voiceError, setVoiceError] = useState('')
-  const voice = useRef<LiveVoice | null>(null)
 
   useEffect(() => {
     if (!sess.current.ready && !offline) sess.current.init().catch(() => setOffline(true))
@@ -287,102 +266,6 @@ export function AgentRail({
     [push, onDataChanged],
   )
 
-  // A voice turn produces the same artefacts a typed turn does, so it lands in
-  // the same timeline: transcripts as bubbles, tool calls as activity rows,
-  // tool results as the cards you can act on.
-  const onVoice = useCallback(
-    (ev: LiveEvent) => {
-      switch (ev.kind) {
-        case 'state':
-          if (ev.state) setVoiceState(ev.state)
-          break
-        case 'error':
-          setVoiceError(ev.text ?? 'voice error')
-          break
-        case 'user-transcript':
-          setItems((xs) => {
-            const last = xs[xs.length - 1]
-            if (!ev.text) {
-              return last?.kind === 'live-user' ? [...xs.slice(0, -1), { ...last, open: false }] : xs
-            }
-            if (last?.kind === 'live-user' && last.open) {
-              return [...xs.slice(0, -1), { ...last, text: last.text + ev.text }]
-            }
-            return [...closeStreaming(xs), { id: nextId(), kind: 'live-user', text: ev.text, open: true }]
-          })
-          break
-        case 'agent-transcript':
-          setItems((xs) => {
-            const last = xs[xs.length - 1]
-            if (!ev.text) {
-              return last?.kind === 'agent' && last.streaming ? [...xs.slice(0, -1), { ...last, streaming: false }] : xs
-            }
-            if (last?.kind === 'agent' && last.streaming) {
-              return [...xs.slice(0, -1), { ...last, text: last.text + ev.text }]
-            }
-            return [...xs, { id: nextId(), kind: 'agent', author: 'automate_me', text: ev.text, streaming: true }]
-          })
-          break
-        case 'tool-start':
-          push({ kind: 'activity', label: activityLabel({ name: ev.tool ?? '' }), status: 'running', tool: ev.tool ?? '' })
-          break
-        case 'tool-error':
-          push({ kind: 'error', text: `${ev.tool}: ${ev.text}` })
-          break
-        case 'tool-done': {
-          const name = ev.tool ?? ''
-          const res = (ev.result ?? {}) as Record<string, unknown>
-          setItems((xs) => {
-            const out = [...xs]
-            for (let i = out.length - 1; i >= 0; i--) {
-              const it = out[i]
-              if (it.kind === 'activity' && it.tool === name && it.status === 'running') {
-                out[i] = { ...it, status: 'done' }
-                break
-              }
-            }
-            return out
-          })
-          if (name === 'add_routine_task' && typeof res['cost_of_inaction_per_month'] === 'string') {
-            push({
-              kind: 'task',
-              name: String(res['task_id'] ?? 'Routine'),
-              cost: String(res['cost_of_inaction_per_month']),
-              updated: !!res['updated_existing'],
-            })
-          } else if (name === 'propose_automations' && Array.isArray(res['proposals'])) {
-            push({ kind: 'proposals', rows: res['proposals'] as ProposalRow[] })
-          } else if (name === 'approve_proposal' && res['status'] === 'approved') {
-            push({ kind: 'approved', proposalId: String(res['proposal_id'] ?? '') })
-          } else if (
-            (name === 'plan_my_day' || name === 'get_daily_briefing') &&
-            Array.isArray(res['cards']) &&
-            (res['cards'] as unknown[]).length > 0
-          ) {
-            push({ kind: 'briefing', day: String(res['day'] ?? ''), rows: res['cards'] as BriefingRow[] })
-          }
-          onDataChanged()
-          break
-        }
-      }
-    },
-    [push, onDataChanged],
-  )
-
-  const toggleVoice = useCallback(async () => {
-    setVoiceError('')
-    if (voice.current?.active) {
-      await voice.current.stop()
-      voice.current = null
-      return
-    }
-    const v = new LiveVoice(onVoice)
-    voice.current = v
-    await v.start()
-  }, [onVoice])
-
-  useEffect(() => () => void voice.current?.stop(), [])
-
   const send = useCallback(
     async (text: string) => {
       const t = text.trim()
@@ -397,13 +280,6 @@ export function AgentRail({
           push({ kind: 'error', text: 'Chat is offline — is GOOGLE_API_KEY set on the server?' })
           return
         }
-      }
-      if (voice.current?.active && !photo) {
-        setInput('')
-        stickToBottom.current = true
-        push({ kind: 'user', text: t })
-        voice.current.say(t)
-        return
       }
       setInput('')
       setAttachment(null)
@@ -491,27 +367,14 @@ export function AgentRail({
         <h2 className="m-0 text-[17px] font-semibold leading-tight">Agent activity</h2>
         <p className="m-0 mt-0.5 text-xs text-ink-tertiary flex items-center gap-1.5">
           <span
-            className={`w-1.5 h-1.5 rounded-full ${voiceState === 'listening' ? 'animate-pulse' : ''}`}
-            style={{
-              background:
-                voiceState !== 'idle'
-                  ? voiceState === 'speaking'
-                    ? '#BC9A75'
-                    : TONE.done
-                  : offline
-                    ? TONE.attention
-                    : busy
-                      ? TONE.waiting
-                      : TONE.done,
-            }}
+            className="w-1.5 h-1.5 rounded-full"
+            style={{ background: offline ? TONE.attention : busy ? TONE.waiting : TONE.done }}
           />
-          {voiceState !== 'idle'
-            ? VOICE_LABEL[voiceState]
-            : offline
-              ? 'chat offline — the dashboard still works'
-              : busy
-                ? 'working…'
-                : `${activity.length} action${activity.length === 1 ? '' : 's'} today · live`}
+          {offline
+            ? 'chat offline — the dashboard still works'
+            : busy
+              ? 'working…'
+              : `${activity.length} action${activity.length === 1 ? '' : 's'} today · live`}
         </p>
         </div>
         {onClose && (
@@ -589,10 +452,6 @@ export function AgentRail({
           </div>
         )}
 
-        {voiceError && (
-          <div className="bg-alert-tint text-alert-deep rounded-xl px-3 py-2 text-xs">{voiceError}</div>
-        )}
-
         {attachment && (
           <div className="flex items-center gap-2 text-xs text-ink-secondary">
             <img src={attachment.previewUrl} alt="" className="h-11 w-11 object-cover rounded-lg border border-line" />
@@ -629,15 +488,12 @@ export function AgentRail({
           />
           <button
             type="button"
-            onClick={() => void toggleVoice()}
-            title={voiceState === 'idle' ? 'Talk to the agent' : 'End the voice session'}
-            aria-label={voiceState === 'idle' ? 'Start voice' : 'Stop voice'}
-            aria-pressed={voiceState !== 'idle'}
-            className={`rounded-full w-9 h-9 shrink-0 cursor-pointer flex items-center justify-center transition-colors ${
-              voiceState === 'idle' ? 'hover:bg-gold-tint text-ink-secondary' : 'bg-alert text-white'
-            } ${voiceState === 'listening' ? 'mic-live' : ''}`}
+            onClick={() => onGo('live')}
+            title="Talk to the agent out loud"
+            aria-label="Open the live call"
+            className="rounded-full w-9 h-9 shrink-0 cursor-pointer flex items-center justify-center hover:bg-gold-tint text-ink-secondary transition-colors"
           >
-            {voiceState === 'idle' ? <MicGlyph /> : <StopGlyph />}
+            <MicGlyph />
           </button>
           <button
             type="button"
@@ -660,7 +516,7 @@ export function AgentRail({
                 void send(input)
               }
             }}
-            placeholder={voiceState === 'idle' ? 'Ask or describe a routine' : 'Speak — or type, same session'}
+            placeholder="Ask or describe a routine"
             className="flex-1 resize-none bg-transparent px-1 py-2 text-sm outline-none leading-5 placeholder:text-ink-tertiary"
           />
           {busy ? (
@@ -941,20 +797,6 @@ function Row({
             >
               Decline
             </button>
-          </div>
-        </div>
-      )
-    case 'live-user':
-      return (
-        <div className="chat-item flex justify-end">
-          <div className="max-w-[88%] bg-teal text-white rounded-2xl rounded-br-md px-3.5 py-2 text-sm">
-            <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.08em] opacity-60 mb-0.5">
-              <MicGlyph size={9} /> spoken
-            </span>
-            <div className="whitespace-pre-wrap">
-              {item.text}
-              {item.open && <span className="cursor" aria-hidden />}
-            </div>
           </div>
         </div>
       )

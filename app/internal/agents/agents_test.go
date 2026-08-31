@@ -1,7 +1,12 @@
 package agents
 
 import (
+	"context"
+	"strings"
 	"testing"
+	"time"
+
+	"google.golang.org/adk/v2/agent"
 
 	"automate-me/app/internal/store"
 )
@@ -50,5 +55,34 @@ func TestBRL(t *testing.T) {
 		if got := brl(cents); got != want {
 			t.Errorf("brl(%d) = %q, want %q", cents, got, want)
 		}
+	}
+}
+
+func TestApproveResolvesALooseName(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	if err := store.SeedDemo(ctx, st, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	d := Deps{Store: st, UserID: func(agent.Context) string { return store.DemoUserID }}
+
+	// The voice model guessed an id it never saw. It should still land on the
+	// dishwasher, because that is the only proposal matching the word.
+	out, err := d.Approve(ctx, store.DemoUserID, approveIn{ProposalID: "prop-dishwasher"})
+	if err != nil {
+		t.Fatalf("loose match failed: %v", err)
+	}
+	if out.Status != "approved" || !out.Executable {
+		t.Fatalf("got %+v, want an approved executable purchase", out)
+	}
+
+	// Nothing resembling this exists: the error has to name the real options
+	// so the model can retry rather than apologise.
+	_, err = d.Approve(ctx, store.DemoUserID, approveIn{ProposalID: "prop-teleporter"})
+	if err == nil {
+		t.Fatal("expected an error for an unknown proposal")
+	}
+	if !strings.Contains(err.Error(), "propose_automations") || !strings.Contains(err.Error(), "dishwasher") {
+		t.Fatalf("unhelpful error: %v", err)
 	}
 }

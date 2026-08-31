@@ -24,6 +24,8 @@ export interface LiveEvent {
   text?: string
   /** true while the model is still mid-sentence */
   partial?: boolean
+  /** which side is producing audio right now */
+  side?: 'in' | 'out'
   tool?: string
   result?: unknown
 }
@@ -91,6 +93,11 @@ export class LiveVoice {
   /** when the next chunk of speech should start, so playback stays gapless */
   private playHead = 0
   private playing: AudioBufferSourceNode[] = []
+  // Analysers on both ends of the conversation, so the UI can draw what is
+  // actually being said rather than a decorative loop.
+  private inAnalyser: AnalyserNode | null = null
+  private outAnalyser: AnalyserNode | null = null
+  private outGain: GainNode | null = null
   private muted = false
   private closed = false
 
@@ -132,6 +139,13 @@ export class LiveVoice {
 
     this.outCtx = new AudioContext({ sampleRate: OUT_RATE })
     await this.outCtx.resume()
+    // Everything the model says passes through here on its way to the speakers.
+    this.outGain = this.outCtx.createGain()
+    this.outAnalyser = this.outCtx.createAnalyser()
+    this.outAnalyser.fftSize = 1024
+    this.outAnalyser.smoothingTimeConstant = 0.75
+    this.outGain.connect(this.outAnalyser)
+    this.outAnalyser.connect(this.outCtx.destination)
 
     this.session = await ai.live.connect({
       model: cfg.model!,
@@ -166,6 +180,10 @@ export class LiveVoice {
     URL.revokeObjectURL(url)
 
     this.source = this.inCtx.createMediaStreamSource(this.mic!)
+    this.inAnalyser = this.inCtx.createAnalyser()
+    this.inAnalyser.fftSize = 1024
+    this.inAnalyser.smoothingTimeConstant = 0.75
+    this.source.connect(this.inAnalyser)
     this.node = new AudioWorkletNode(this.inCtx, 'capture')
     this.node.port.onmessage = (ev) => {
       if (!this.session || this.muted || this.closed) return
@@ -245,7 +263,7 @@ export class LiveVoice {
     const buf = decodePCM16(b64, this.outCtx)
     const src = this.outCtx.createBufferSource()
     src.buffer = buf
-    src.connect(this.outCtx.destination)
+    src.connect(this.outGain ?? this.outCtx.destination)
     const now = this.outCtx.currentTime
     this.playHead = Math.max(this.playHead, now)
     src.start(this.playHead)
@@ -270,6 +288,43 @@ export class LiveVoice {
     this.playHead = 0
   }
 
+  /**
+   * A symmetric waveform in [0,1], `bins` wide, for whichever side is active.
+   * Reading the analyser on demand (rather than pushing events) keeps this at
+   * the animation's cadence instead of the socket's.
+   */
+  waveform(side: 'in' | 'out', bins: number): Float32Array {
+    const out = new Float32Array(bins)
+    const analyser = side === 'in' ? this.inAnalyser : this.outAnalyser
+    if (!analyser) return out
+    const raw = new Uint8Array(analyser.fftSize)
+    analyser.getByteTimeDomainData(raw)
+    const per = Math.floor(raw.length / bins)
+    for (let i = 0; i < bins; i++) {
+      let peak = 0
+      for (let j = 0; j < per; j++) {
+        peak = Math.max(peak, Math.abs(raw[i * per + j] - 128) / 128)
+      }
+      out[i] = peak
+    }
+    return out
+  }
+
+  /** Loudness in [0,1] — the mic when muted reads zero. */
+  level(side: 'in' | 'out'): number {
+    if (side === 'in' && this.muted) return 0
+    const analyser = side === 'in' ? this.inAnalyser : this.outAnalyser
+    if (!analyser) return 0
+    const raw = new Uint8Array(analyser.fftSize)
+    analyser.getByteTimeDomainData(raw)
+    let sum = 0
+    for (const v of raw) {
+      const d = (v - 128) / 128
+      sum += d * d
+    }
+    return Math.min(1, Math.sqrt(sum / raw.length) * 3)
+  }
+
   /** Hold the mic without tearing the session down. */
   setMuted(muted: boolean) {
     this.muted = muted
@@ -288,6 +343,9 @@ export class LiveVoice {
     this.node?.port.close()
     this.node?.disconnect()
     this.source?.disconnect()
+    this.inAnalyser?.disconnect()
+    this.outAnalyser?.disconnect()
+    this.outGain?.disconnect()
     this.mic?.getTracks().forEach((t) => t.stop())
     await this.inCtx?.close().catch(() => {})
     await this.outCtx?.close().catch(() => {})
@@ -297,6 +355,8 @@ export class LiveVoice {
     this.inCtx = this.outCtx = null
     this.node = null
     this.source = null
+    this.inAnalyser = this.outAnalyser = null
+    this.outGain = null
     this.emit({ kind: 'state', state: 'idle' })
   }
 }

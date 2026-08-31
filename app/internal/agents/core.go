@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"automate-me/app/internal/briefing"
 	"automate-me/app/internal/catalog"
@@ -107,7 +108,13 @@ func (d Deps) Propose(ctx context.Context, userID string, in proposeIn) (propose
 func (d Deps) Approve(ctx context.Context, userID string, in approveIn) (approveOut, error) {
 	p, err := d.Store.GetProposal(ctx, in.ProposalID)
 	if err != nil {
-		return approveOut{}, err
+		// A voice model that never listed the proposals will guess an id. Say
+		// what actually exists so it can retry instead of apologising.
+		resolved, alt := d.resolveProposal(ctx, userID, in.ProposalID)
+		if alt != "" {
+			return approveOut{}, fmt.Errorf("no proposal %q. %s", in.ProposalID, alt)
+		}
+		p = resolved
 	}
 	if p.UserID != userID {
 		return approveOut{}, fmt.Errorf("proposal belongs to another user")
@@ -130,6 +137,32 @@ func (d Deps) Approve(ctx context.Context, userID string, in approveIn) (approve
 		out.Next = "Guided recipe, nothing to buy: give the user 2-4 concrete setup steps for this recipe right now. Do not mention a consent screen."
 	}
 	return out, nil
+}
+
+// resolveProposal is the fallback when an id does not exist: match loosely on
+// the recipe, and if that is ambiguous or empty, return a message naming the
+// real options.
+func (d Deps) resolveProposal(ctx context.Context, userID, want string) (store.Proposal, string) {
+	all, err := d.Store.ListProposals(ctx, userID)
+	if err != nil || len(all) == 0 {
+		return store.Proposal{}, "The user has no proposals yet — call propose_automations first."
+	}
+	needle := strings.ToLower(strings.NewReplacer("prop-", "", "_", " ", "-", " ").Replace(want))
+	var hits []store.Proposal
+	for _, p := range all {
+		hay := strings.ToLower(strings.ReplaceAll(p.RecipeID, "-", " "))
+		if needle != "" && (strings.Contains(needle, hay) || strings.Contains(hay, needle)) {
+			hits = append(hits, p)
+		}
+	}
+	if len(hits) == 1 {
+		return hits[0], ""
+	}
+	options := make([]string, 0, len(all))
+	for _, p := range all {
+		options = append(options, fmt.Sprintf("%s (%s)", p.ID, p.RecipeID))
+	}
+	return store.Proposal{}, "Call propose_automations first, or use one of: " + strings.Join(options, ", ")
 }
 
 // PlanMyDay builds today's briefing.
@@ -351,5 +384,6 @@ Rules that do not bend:
 - Before saving a routine, say your estimate for how long it takes and how often, and wait for them to confirm or correct it.
 - You may record an approval by voice, but you can never buy anything. Purchases are signed by the user on the consent screen. Say so plainly when a proposal is a purchase.
 - Call get_life_pnl before you talk about their overall numbers, and get_daily_briefing before you talk about their day.
+- Never invent an identifier. Before approving anything, call propose_automations so you are holding a real proposal_id.
 
 How to speak: this is a conversation, not a report. Short sentences. Lead with the number that matters. No markdown, no bullet lists, no reading identifiers out loud. Under 60 words unless they ask for detail. Match the user's language.`

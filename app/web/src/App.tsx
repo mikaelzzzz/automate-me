@@ -3,6 +3,7 @@ import { api, type Briefing, type LedgerEntry, type MandateRecord, type Pnl, typ
 import { deriveActivity } from './lib/activity'
 import { AgentRail, type AgentHandle, type Screen } from './components/AgentRail'
 import { Dashboard } from './pages/Dashboard'
+import { LiveVoicePage } from './pages/LiveVoice'
 import { ProposalsView } from './pages/Proposals'
 import { BriefingView } from './components/BriefingView'
 import { LedgerView } from './components/LedgerView'
@@ -28,6 +29,16 @@ const RAIL: { id: Screen; label: string; icon: ReactNode }[] = [
       <>
         <circle cx="12" cy="12" r="4" />
         <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+      </>
+    ),
+  },
+  {
+    id: 'live',
+    label: 'Talk',
+    icon: (
+      <>
+        <rect x="9" y="2" width="6" height="11" rx="3" />
+        <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
       </>
     ),
   },
@@ -149,7 +160,7 @@ export default function App() {
 
       {/* main column */}
       <main
-        className="flex-1 min-w-0 px-7 py-7 xl:pr-[calc(var(--agent-w)+1.75rem)]"
+        className={`flex-1 min-w-0 px-7 py-7 ${screen === 'live' ? '' : 'xl:pr-[calc(var(--agent-w)+1.75rem)]'}`}
         style={{ marginLeft: 'var(--rail-w)' }}
       >
         {error && (
@@ -163,6 +174,7 @@ export default function App() {
             !error && <div className="text-ink-tertiary text-sm py-20 text-center">loading…</div>
           ))}
 
+        {screen === 'live' && <LiveVoicePage onDataChanged={refresh} onGo={go} />}
         {screen === 'proposals' && <ProposalsView proposals={proposals} onBuy={setConsentFor} onAsk={askAgent} onGo={go} />}
         {screen === 'briefing' && <BriefingView onAsk={askAgent} version={version} />}
         {screen === 'ledger' && <LedgerView entries={ledger} onAsk={askAgent} />}
@@ -186,7 +198,7 @@ export default function App() {
       <div
         className={`fixed z-40 xl:z-20 xl:inset-y-0 xl:right-0 xl:left-auto xl:h-auto xl:translate-y-0 xl:w-[var(--agent-w)] inset-x-0 bottom-0 h-[86vh] rounded-t-[18px] xl:rounded-none overflow-hidden shadow-[var(--shadow-float)] xl:shadow-none transition-transform ${
           railOpen ? 'translate-y-0' : 'translate-y-full xl:translate-y-0'
-        }`}
+        } ${screen === 'live' ? 'xl:hidden' : ''}`}
       >
         <AgentRail
           ref={agent}
@@ -205,7 +217,7 @@ export default function App() {
         />
       </div>
 
-      {!railOpen && (
+      {!railOpen && screen !== 'live' && (
         <button
           onClick={() => setRailOpen(true)}
           className="xl:hidden fixed bottom-5 right-5 z-30 rounded-pill bg-teal text-white px-5 py-3 text-sm font-medium shadow-[var(--shadow-float)] cursor-pointer"
