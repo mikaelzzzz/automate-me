@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Markdown from 'react-markdown'
 import { LiveVoice as LiveSession, type LiveEvent, type LiveState } from '../lib/live'
 import type { Screen } from '../components/AgentRail'
 
@@ -11,13 +12,23 @@ type Turn =
   | { id: number; kind: 'you'; text: string; open: boolean }
   | { id: number; kind: 'agent'; text: string; open: boolean }
   | { id: number; kind: 'tool'; tool: string; status: 'running' | 'done' | 'error'; detail?: string; via?: string[]; model?: string }
-  | { id: number; kind: 'links'; products: Product[] }
+  | { id: number; kind: 'links'; products: Product[]; answer: string; sources: Product[] }
 
 // A voice call cannot hand you a URL. When the Product Scout comes back with
 // real listings, the links land on screen instead of being read out loud.
 type Product = { label: string; url: string }
 
 let seq = 1
+
+// The scout answers with store links; they open in a new tab so following one
+// never drops the call.
+const MD = {
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a href={href} target="_blank" rel="noreferrer noopener" className="text-gold-deep underline underline-offset-2">
+      {children}
+    </a>
+  ),
+}
 
 const AGENT_LABEL: Record<string, string> = {
   automate_me: 'Orchestrator',
@@ -154,8 +165,15 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
           const via = Array.isArray(r['handled_by']) ? (r['handled_by'] as string[]) : undefined
           setTurns((xs) => markTool(xs, ev.tool ?? '', 'done', undefined, via, r['reasoned_with'] as string))
           if (ev.tool === 'find_products' && typeof r['answer'] === 'string') {
-            const products = productsFrom(r['answer'] as string)
-            if (products.length > 0) setTurns((xs) => [...xs, { id: seq++, kind: 'links', products }])
+            const answer = r['answer'] as string
+            // Three ways to a clickable link, because the model formats its
+            // answer differently every time: links parsed out of the prose,
+            // the pages Google Search actually grounded on, and failing both,
+            // the answer itself rendered as markdown.
+            const sources = (Array.isArray(r['sources']) ? (r['sources'] as { title?: string; uri?: string }[]) : [])
+              .filter((s) => s.uri)
+              .map((s) => ({ label: s.title || s.uri || '', url: s.uri as string }))
+            setTurns((xs) => [...xs, { id: seq++, kind: 'links', products: productsFrom(answer), answer, sources }])
           }
           onDataChanged()
           break
@@ -417,12 +435,24 @@ function markTool(
 
 function TurnRow({ t, onGo }: { t: Turn; onGo: (s: Screen) => void }) {
   if (t.kind === 'links') {
+    // Nothing parsed and nothing grounded: show what it said, links and all.
+    const rows = t.products.length > 0 ? t.products : t.sources
+    if (rows.length === 0) {
+      return (
+        <div className="chat-item">
+          <div className="bg-surface border border-line rounded-2xl rounded-bl-md px-4 py-3 max-w-[76%] chat-md text-sm">
+            <div className="scap mb-1">found on the web</div>
+            <Markdown components={MD}>{t.answer}</Markdown>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="chat-item">
         <div className="bg-surface border border-line rounded-2xl rounded-bl-md overflow-hidden max-w-[76%]">
           <div className="scap px-4 pt-3 pb-1">found on the web</div>
           <ul className="m-0 list-none p-0">
-            {t.products.map((p) => (
+            {rows.map((p) => (
               <li key={p.url} className="border-t border-[rgba(19,53,63,0.06)] first:border-0">
                 <a
                   href={p.url}

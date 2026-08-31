@@ -300,6 +300,21 @@ func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps, sessions 
 			if err != nil {
 				return out, err
 			}
+			// Grounding chunks are where the Product Scout's links really live,
+			// and they ride on their own event — before the guard below, which
+			// drops events that carry no content.
+			if gm := ev.GroundingMetadata; gm != nil {
+				for _, ch := range gm.GroundingChunks {
+					if ch == nil || ch.Web == nil || ch.Web.URI == "" || seen["s:"+ch.Web.URI] {
+						continue
+					}
+					seen["s:"+ch.Web.URI] = true
+					out.Sources = append(out.Sources, agents.Source{
+						Title: cmp.Or(ch.Web.Title, ch.Web.Domain, ch.Web.URI),
+						URI:   ch.Web.URI,
+					})
+				}
+			}
 			if ev.Partial || ev.Content == nil {
 				continue
 			}

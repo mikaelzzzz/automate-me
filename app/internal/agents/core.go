@@ -348,6 +348,17 @@ type Consultation struct {
 	Handled  []string `json:"handled_by"`
 	Model    string   `json:"reasoned_with"`
 	ToolsRun []string `json:"tools_run,omitempty"`
+	// Sources are the pages Google Search actually grounded the answer on.
+	// They come from the model's grounding metadata, not from the prose: a
+	// spoken answer often names a price and no link, and a link the model
+	// forgot to type is still a link the user needs.
+	Sources []Source `json:"sources,omitempty"`
+}
+
+// Source is one grounded web result: what the page is, and where it is.
+type Source struct {
+	Title string `json:"title"`
+	URI   string `json:"uri"`
 }
 
 // LiveTool is one function the Live API voice session may call. Declaration is
