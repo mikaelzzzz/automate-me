@@ -31,7 +31,13 @@ https://automate-me-288504867090.us-central1.run.app
 
 ## Testing instructions
 
-No login and no credentials required — the app boots with seeded demo data
+**The app is behind HTTP basic auth.** Put the reviewer username and password in Devpost's
+testing-credentials field — never in this file, never in the "Try it out" link, and never in any
+public field: this repository and the Devpost project page are both public, and a password in
+either is no password at all. Everything except `/health` is gated; the merchant agent stays
+private behind Cloud Run IAM regardless.
+
+Once past the prompt there is nothing else to sign into — the app boots with seeded demo data
 (`DEMO_MODE=seed`), so judges land straight on a working dashboard.
 
 The demo user starts with a **Spending Authorization** already signed: a standing delegation
