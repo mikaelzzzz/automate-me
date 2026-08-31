@@ -23,6 +23,10 @@ import (
 type Surface struct {
 	mu      sync.Mutex
 	signers map[string]*ap2core.Signer
+	// auths holds each user's standing Spending Authorization JWT. Same demo
+	// scope as signers: per-process, never persisted, gone on restart. See
+	// authority.go.
+	auths map[string]string
 
 	Store    store.Store
 	Merchant *shopping.MerchantClient
@@ -30,7 +34,11 @@ type Surface struct {
 }
 
 func NewSurface(st store.Store, mc *shopping.MerchantClient) *Surface {
-	return &Surface{signers: map[string]*ap2core.Signer{}, Store: st, Merchant: mc, Now: time.Now}
+	return &Surface{
+		signers: map[string]*ap2core.Signer{},
+		auths:   map[string]string{},
+		Store:   st, Merchant: mc, Now: time.Now,
+	}
 }
 
 // SignerFor returns (creating on first use) the user's P-256 signer. Demo
@@ -57,12 +65,34 @@ type ConsentResult struct {
 	PaymentReceipt  string           `json:"payment_receipt_jwt"`
 	Completed       bool             `json:"completed"`
 	FailureReason   string           `json:"failure_reason,omitempty"`
+	// Autonomous is true when a standing Spending Authorization covered this
+	// purchase and no consent screen was shown.
+	Autonomous bool `json:"autonomous"`
+	// NeedsConsent is true when the agent tried to buy under a standing
+	// authorization and a constraint refused it. Nothing was signed; the UI
+	// must fall back to the consent screen. This is a normal outcome, not an
+	// error.
+	NeedsConsent bool `json:"needs_consent,omitempty"`
 }
 
 // ExecuteConsentedPurchase runs the full AP2 v0.2 dance for an approved
 // proposal. Calling this endpoint IS the explicit user consent (the UI modal's
 // confirm button). Deterministic end to end.
+//
+// No gate: consent given for this specific checkout outranks any standing
+// envelope, so a purchase the user confirms by hand is never capped.
 func (s *Surface) ExecuteConsentedPurchase(ctx context.Context, userID, proposalID, productID string, quantity int) (ConsentResult, error) {
+	return s.execute(ctx, userID, proposalID, productID, quantity, nil)
+}
+
+// execute is the AP2 dance shared by the consented and the autonomous paths.
+//
+// gate, when non-nil, is the policy check for a purchase nobody is watching.
+// It runs after the merchant-signed Checkout JWT has been verified and before
+// the first signature, so a refusal costs nothing and signs nothing. A gate
+// error comes back as NeedsConsent rather than as a Go error: "ask the human"
+// is an expected outcome of an autonomous attempt, not a fault.
+func (s *Surface) execute(ctx context.Context, userID, proposalID, productID string, quantity int, gate func(ap2core.Checkout) error) (ConsentResult, error) {
 	prop, err := s.Store.GetProposal(ctx, proposalID)
 	if err != nil {
 		return ConsentResult{}, fmt.Errorf("proposal: %w", err)
@@ -92,6 +122,17 @@ func (s *Surface) ExecuteConsentedPurchase(ctx context.Context, userID, proposal
 	checkout, err := ap2core.VerifyCheckoutJWT(co.CheckoutJWT, merchantPub)
 	if err != nil {
 		return ConsentResult{}, fmt.Errorf("checkout jwt: %w", err)
+	}
+
+	// Policy check on the merchant-signed total. Nothing has been signed yet,
+	// so a refusal here leaves no trace on the rail.
+	if gate != nil {
+		if err := gate(checkout); err != nil {
+			return ConsentResult{
+				Checkout: checkout, Completed: false,
+				NeedsConsent: true, FailureReason: err.Error(),
+			}, nil
+		}
 	}
 
 	rec := store.MandateRecord{
@@ -156,7 +197,7 @@ func (s *Surface) ExecuteConsentedPurchase(ctx context.Context, userID, proposal
 	return ConsentResult{
 		MandateRecordID: rec.ID, Checkout: checkout,
 		CheckoutReceipt: rec.CheckoutReceipt, PaymentReceipt: rec.PaymentReceipt,
-		Completed: true,
+		Completed: true, Autonomous: gate != nil,
 	}, nil
 }
 
