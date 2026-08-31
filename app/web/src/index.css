@@ -262,3 +262,12 @@ textarea {
   font: inherit;
   color: inherit;
 }
+
+/* the mic pulses while the session is open and listening */
+@keyframes mic-live {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(201, 85, 61, 0.45); }
+  50% { box-shadow: 0 0 0 6px rgba(201, 85, 61, 0); }
+}
+.mic-live {
+  animation: mic-live 1.6s ease-out infinite;
+}

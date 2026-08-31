@@ -22,6 +22,8 @@ type Handler struct {
 	// Briefing is nil when MAPS_API_KEY is not configured (endpoints answer 503).
 	Briefing *briefing.Builder
 	Blocks   briefing.BlockWriter
+	// Live powers the voice session; zero value disables it.
+	Live LiveDeps
 	// UserID resolves the acting user (demo: fixed).
 	UserID func(*http.Request) string
 }
@@ -36,6 +38,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /app/api/briefing", h.briefing)
 	mux.HandleFunc("POST /app/api/briefing/run", h.runBriefing)
 	mux.HandleFunc("POST /app/api/briefing/{id}/block", h.briefingBlock)
+	mux.HandleFunc("POST /app/api/live/session", h.liveSession)
+	mux.HandleFunc("POST /app/api/live/tool", h.liveTool)
 }
 
 type briefingResponse struct {

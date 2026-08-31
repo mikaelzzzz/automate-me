@@ -83,16 +83,44 @@ func main() {
 		slog.Warn("MAPS_API_KEY not set; daily briefing disabled")
 	}
 
+	// Voice: the browser streams audio straight to the Gemini Live API and
+	// posts the model's function calls back to us, where they run the same
+	// tools the ADK graph runs.
+	deps := agents.Deps{
+		Store:    st,
+		UserID:   func(agent.Context) string { return store.DemoUserID },
+		Briefing: planner,
+		Blocks:   blocks,
+	}
+	live := httpapi.LiveDeps{
+		Tools:             deps.LiveTools(),
+		Model:             cmp.Or(os.Getenv("LIVE_MODEL"), "gemini-3.1-flash-live-preview"),
+		Voice:             cmp.Or(os.Getenv("LIVE_VOICE"), "Zephyr"),
+		SystemInstruction: agents.LiveSystemInstruction,
+	}
+	if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
+		gc, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: key, Backend: genai.BackendGeminiAPI})
+		if err != nil {
+			slog.Warn("voice disabled: genai client", "err", err)
+		} else {
+			live.Client = gc
+			slog.Info("live voice enabled", "model", live.Model, "voice", live.Voice, "tools", len(live.Tools))
+		}
+	} else {
+		slog.Warn("GOOGLE_API_KEY not set; live voice disabled")
+	}
+
 	api := &httpapi.Handler{
 		Store:    st,
 		Trusted:  surface,
 		Briefing: planner,
 		Blocks:   blocks,
+		Live:     live,
 		UserID:   func(*http.Request) string { return store.DemoUserID },
 	}
 	api.Register(mux)
 
-	if err := mountChat(ctx, mux, st, planner, blocks); err != nil {
+	if err := mountChat(ctx, mux, deps); err != nil {
 		// Dashboard + consent must come up even without a model key.
 		slog.Warn("chat API disabled (no model?)", "err", err)
 	}
@@ -112,17 +140,12 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func mountChat(ctx context.Context, mux *http.ServeMux, st store.Store, planner *briefing.Builder, blocks briefing.BlockWriter) error {
+func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps) error {
 	llm, err := gemini.NewModel(ctx, cmp.Or(os.Getenv("GEMINI_MODEL"), "gemini-3.5-flash"), &genai.ClientConfig{})
 	if err != nil {
 		return err
 	}
-	root, err := agents.New(llm, agents.Deps{
-		Store:    st,
-		UserID:   func(agent.Context) string { return store.DemoUserID },
-		Briefing: planner,
-		Blocks:   blocks,
-	})
+	root, err := agents.New(llm, d)
 	if err != nil {
 		return err
 	}

@@ -11,7 +11,7 @@ Multi-agent system on **ADK Go v2** + **Gemini 3.5 Flash**, running on **Cloud R
 | **Merchant agent** | `https://merchant-agent-288504867090.us-central1.run.app` (private — only the app's service account can invoke it) |
 | **Stack** | Go 1.26 · ADK Go v2.2.0 · Gemini 3.5 Flash · React 19 + Vite + Tailwind 4 |
 | **Google Cloud** | Cloud Run · Cloud Build · Artifact Registry · Secret Manager · Cloud Scheduler · Maps Platform (Routes + Weather) · Cloud Logging · Cloud Trace |
-| **Protocols** | **AP2 v0.2** (agent payments) · **A2A v1.0.1** (agent-to-agent) |
+| **Protocols** | **AP2 v0.2** (agent payments) · **A2A v1.0.1** (agent-to-agent) · **Live API** (real-time voice) |
 
 > Payments are **simulated and labelled as such** — but the AP2 protocol runs for real: ECDSA P-256 signed mandates, verifiable receipts, full audit trail.
 
@@ -28,6 +28,16 @@ The loop is **Proof of Time**: capture → price → rank → **execute** → pr
 5. **Prove.** The Savings Ledger accumulates hours and R$ bought back, with the signed AP2 receipts attached to each purchase.
 
 ### Three things worth looking at
+
+**You can just talk to it.** The mic in the agent rail opens a [Gemini Live
+API](https://ai.google.dev/gemini-api/docs/live) session: the browser streams
+microphone audio straight to Gemini over a WebSocket and hears a spoken reply
+back, while the model's function calls come home to `/app/api/live/tool` and run
+**the same tools the ADK graph runs** — same Value Engine, same store, same
+Routes/Weather. The API key never reaches the browser; the server mints a
+single-use ephemeral token pinned to the model. Voice can capture a routine,
+price it, rank automations, approve one and plan your day — but it cannot buy
+anything: a purchase still has to be signed on the consent screen.
 
 **The agent panel is the product.** It streams over SSE, so you watch the graph work: which sub-agent took the question, which tool is running, what it returned. Tool results become cards you can act on — approve a proposal, open the consent screen, read the receipts — without leaving the conversation.
 
@@ -215,13 +225,15 @@ ap2core/            AP2 v0.2 crypto — checkout JWT, closed mandates, receipts,
 app/
   cmd/server        wiring: SPA, REST, adkrest, agent graph
   internal/agents   the graph: orchestrator + 3 sub-agents, 7 tools
+                    core.go — tool bodies shared by the graph and the voice
+                    session, plus the Live tool registry
   internal/engine   Value Engine — pure Go, int64 centavos, no I/O
   internal/catalog  26 recipes as data over 7 capability enums
   internal/briefing Routes/Weather clients, polyline + geometry, GeoSampa layer
   internal/trusted  Trusted Surface — the only holder of user signing keys
   internal/shopping deterministic AP2 client (ID token on Cloud Run)
   internal/store    persistence boundary (Memory today, Firestore next)
-  web/              React SPA
+  web/              React SPA (lib/live.ts drives the Live API session)
 merchant/           AP2 merchant: catalog, mandate verification, receipts,
                     simulated settlement, A2A agent card
 infra/              gcp-setup.sh · deploy.sh · cloudbuild.yaml

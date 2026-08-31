@@ -13,9 +13,6 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 
 	"automate-me/app/internal/briefing"
-	"automate-me/app/internal/catalog"
-	"automate-me/app/internal/engine"
-	"automate-me/app/internal/proposer"
 	"automate-me/app/internal/store"
 )
 
@@ -77,37 +74,7 @@ func (d Deps) addTask() (tool.Tool, error) {
 		Name:        "add_routine_task",
 		Description: "Persist a routine task the user confirmed (name, minutes, frequency). Upserts: pass task_id (from get_life_pnl) to update an existing task; a task with the same name is updated, never duplicated. Returns the monthly Cost of Inaction computed by the deterministic Value Engine.",
 	}, func(ctx agent.Context, in addTaskIn) (addTaskOut, error) {
-		if in.Name == "" || in.Minutes <= 0 || in.TimesPerMonth <= 0 {
-			return addTaskOut{}, fmt.Errorf("name, positive minutes and times_per_month are required")
-		}
-		u, err := d.userRate(ctx)
-		if err != nil {
-			return addTaskOut{}, err
-		}
-		existing, err := d.Store.ListTasks(ctx, u.ID)
-		if err != nil {
-			return addTaskOut{}, err
-		}
-		t, updated := upsertTarget(existing, in.TaskID, in.Name)
-		t.Name = in.Name
-		t.EstMinutes = in.Minutes
-		t.FreqPerMon = in.TimesPerMonth
-		t.Source = defaultStr(in.Source, defaultStr(t.Source, "interview"))
-		t.Confirmed = true
-		if err := d.Store.PutTask(ctx, u.ID, t); err != nil {
-			return addTaskOut{}, err
-		}
-		cost := engine.CostOfInactionCents(engine.Task{Name: t.Name, EstMinutes: t.EstMinutes, FreqPerMonth: t.FreqPerMon}, u.HourlyRateCents)
-		note := "Created. Value computed deterministically; never estimate money yourself."
-		if updated {
-			note = "Updated the existing task instead of duplicating it. Value computed deterministically; never estimate money yourself."
-		}
-		return addTaskOut{
-			TaskID:              t.ID,
-			Updated:             updated,
-			CostOfInactionMonth: brl(cost),
-			Note:                note,
-		}, nil
+		return d.AddTask(ctx, d.UserID(ctx), in)
 	})
 }
 
@@ -134,30 +101,7 @@ func (d Deps) lifePNL() (tool.Tool, error) {
 		Name:        "get_life_pnl",
 		Description: "The user's Life P&L: every routine task with its monthly hours and Cost of Inaction, plus totals.",
 	}, func(ctx agent.Context, _ struct{}) (pnlOut, error) {
-		u, err := d.userRate(ctx)
-		if err != nil {
-			return pnlOut{}, err
-		}
-		tasks, err := d.Store.ListTasks(ctx, u.ID)
-		if err != nil {
-			return pnlOut{}, err
-		}
-		out := pnlOut{}
-		var totalMin float64
-		var totalCents int64
-		for _, t := range tasks {
-			et := engine.Task{Name: t.Name, EstMinutes: t.EstMinutes, FreqPerMonth: t.FreqPerMon}
-			cost := engine.CostOfInactionCents(et, u.HourlyRateCents)
-			mins := engine.MinutesPerMonth(et)
-			totalMin += mins
-			totalCents += cost
-			out.Tasks = append(out.Tasks, pnlRow{
-				TaskID: t.ID, Name: t.Name, Minutes: t.EstMinutes, PerMonth: t.FreqPerMon,
-				HoursMonth: round1(mins / 60), CostMonth: brl(cost),
-			})
-		}
-		out.Total = pnlTotal{HoursMonth: round1(totalMin / 60), CostMonth: brl(totalCents), HourlyRate: brl(u.HourlyRateCents) + "/h"}
-		return out, nil
+		return d.LifePNL(ctx, d.UserID(ctx))
 	})
 }
 
@@ -183,20 +127,7 @@ func (d Deps) proposeAutomations() (tool.Tool, error) {
 		Name:        "propose_automations",
 		Description: "Match the user's tasks against the automation catalog, rank by net monthly savings (deterministic engine) and persist proposals. Negative-net automations are never proposed.",
 	}, func(ctx agent.Context, in proposeIn) (proposeOut, error) {
-		results, err := proposer.Propose(ctx, d.Store, d.UserID(ctx), in.TaskID)
-		if err != nil {
-			return proposeOut{}, err
-		}
-		out := proposeOut{Note: "Payback computed deterministically. Executable proposals need explicit user approval before any action."}
-		for _, r := range results {
-			out.Proposals = append(out.Proposals, proposalRow{
-				ProposalID: r.Proposal.ID, Recipe: r.Recipe.Title, Class: string(r.Recipe.Class),
-				MonthlySavings: brl(r.Proposal.MonthlySavingsCents), NetMonthly: brl(r.Proposal.NetMonthlyCents),
-				PaybackMonths: paybackText(r.Proposal.PaybackMonths),
-				Executable:    r.Recipe.Class == catalog.ClassExecutable && r.Recipe.ProductID != "",
-			})
-		}
-		return out, nil
+		return d.Propose(ctx, d.UserID(ctx), in)
 	})
 }
 
@@ -216,31 +147,7 @@ func (d Deps) approveProposal() (tool.Tool, error) {
 		Description:         "Mark a proposal as approved by the user. Purchases still require the consent screen (Trusted Surface) before any money action.",
 		RequireConfirmation: true,
 	}, func(ctx agent.Context, in approveIn) (approveOut, error) {
-		p, err := d.Store.GetProposal(ctx, in.ProposalID)
-		if err != nil {
-			return approveOut{}, err
-		}
-		if p.UserID != d.UserID(ctx) {
-			return approveOut{}, fmt.Errorf("proposal belongs to another user")
-		}
-		p.Status = store.ProposalApproved
-		if err := d.Store.PutProposal(ctx, p); err != nil {
-			return approveOut{}, err
-		}
-		out := approveOut{Status: "approved", Recipe: p.RecipeID}
-		for _, r := range catalog.Seed() {
-			if r.ID != p.RecipeID {
-				continue
-			}
-			out.Recipe = r.Title
-			out.Executable = r.Class == catalog.ClassExecutable && r.ProductID != ""
-		}
-		if out.Executable {
-			out.Next = "Purchase: tell the user to review and sign on the consent screen (the 'Review & sign' button); the agent cannot sign payment mandates."
-		} else {
-			out.Next = "Guided recipe, nothing to buy: give the user 2-4 concrete setup steps for this recipe right now. Do not mention a consent screen."
-		}
-		return out, nil
+		return d.Approve(ctx, d.UserID(ctx), in)
 	})
 }
 
@@ -292,21 +199,7 @@ func (d Deps) planMyDay() (tool.Tool, error) {
 		Name:        "plan_my_day",
 		Description: "Build today's Daily Briefing: one route worker per appointment (Routes API with future departure time), traffic priced at the user's hourly rate, hourly weather at departure, flood risk from live alerts and GeoSampa history. Returns the cards; call get_daily_briefing if it was already built.",
 	}, func(ctx agent.Context, _ struct{}) (briefingOut, error) {
-		if d.Briefing == nil {
-			return briefingOut{Note: "Maps Platform is not configured on this server (MAPS_API_KEY); tell the user the briefing is unavailable."}, nil
-		}
-		u, err := d.userRate(ctx)
-		if err != nil {
-			return briefingOut{}, err
-		}
-		day := d.Briefing.DayFor(d.Briefing.Now())
-		cards := d.Briefing.Build(ctx, u.ID, u.HourlyRateCents, briefing.DemoAppointments(day, d.Briefing.Loc))
-		for _, c := range cards {
-			if err := d.Store.PutBriefingCard(ctx, c); err != nil {
-				return briefingOut{}, err
-			}
-		}
-		return briefingOut{Day: d.Briefing.DayKey(day), Cards: d.rows(cards), Note: "Numbers are measured (Routes/Weather/GeoSampa), not estimated. Offer to write the departure blocks to the calendar."}, nil
+		return d.PlanMyDay(ctx, d.UserID(ctx))
 	})
 }
 
@@ -315,18 +208,7 @@ func (d Deps) getBriefing() (tool.Tool, error) {
 		Name:        "get_daily_briefing",
 		Description: "Read the Daily Briefing already built for the day being planned (today before 08:00, else tomorrow).",
 	}, func(ctx agent.Context, _ struct{}) (briefingOut, error) {
-		if d.Briefing == nil {
-			return briefingOut{Note: "Maps Platform is not configured on this server."}, nil
-		}
-		day := d.Briefing.DayFor(d.Briefing.Now())
-		cards, err := d.Store.ListBriefing(ctx, d.UserID(ctx), d.Briefing.DayKey(day))
-		if err != nil {
-			return briefingOut{}, err
-		}
-		if len(cards) == 0 {
-			return briefingOut{Day: d.Briefing.DayKey(day), Note: "Nothing built yet — call plan_my_day."}, nil
-		}
-		return briefingOut{Day: d.Briefing.DayKey(day), Cards: d.rows(cards)}, nil
+		return d.GetBriefing(ctx, d.UserID(ctx))
 	})
 }
 
@@ -345,38 +227,7 @@ func (d Deps) writeBlocks() (tool.Tool, error) {
 		Description:         "Write 'Leave at HH:MM → event' blocks to the user's calendar for the briefed appointments. Requires the user's confirmation.",
 		RequireConfirmation: true,
 	}, func(ctx agent.Context, in blocksIn) (blocksOut, error) {
-		if d.Briefing == nil || d.Blocks == nil {
-			return blocksOut{Note: "Calendar writing is not configured."}, nil
-		}
-		day := d.Briefing.DayKey(d.Briefing.DayFor(d.Briefing.Now()))
-		cards, err := d.Store.ListBriefing(ctx, d.UserID(ctx), day)
-		if err != nil {
-			return blocksOut{}, err
-		}
-		want := map[string]bool{}
-		for _, id := range in.CardIDs {
-			want[id] = true
-		}
-		out := blocksOut{}
-		for _, c := range cards {
-			if len(want) > 0 && !want[c.ID] {
-				continue
-			}
-			id, mode, err := d.Blocks.WriteDepartureBlock(ctx, c)
-			if err != nil {
-				return blocksOut{}, err
-			}
-			c.CalendarBlockID, c.CalendarBlockMode = id, mode
-			if err := d.Store.PutBriefingCard(ctx, c); err != nil {
-				return blocksOut{}, err
-			}
-			out.Written = append(out.Written, c.EventSummary+" · leave "+c.DepartureTime.In(c.EventStart.Location()).Format("15:04"))
-			out.Mode = mode
-		}
-		if out.Mode == "simulated" {
-			out.Note = "No Google Calendar connected on this server: blocks recorded in-app and labelled simulated."
-		}
-		return out, nil
+		return d.WriteBlocks(ctx, d.UserID(ctx), in)
 	})
 }
 
