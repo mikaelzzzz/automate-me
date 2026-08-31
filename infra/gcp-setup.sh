@@ -70,7 +70,10 @@ gcloud services enable --project="$PROJECT_ID" \
   logging.googleapis.com \
   cloudtrace.googleapis.com \
   aiplatform.googleapis.com \
-  billingbudgets.googleapis.com
+  billingbudgets.googleapis.com \
+  routes.googleapis.com \
+  weather.googleapis.com \
+  cloudscheduler.googleapis.com
 
 # ------------------------------------------------------ public access ---
 # The flowmika.com org enforces Domain Restricted Sharing
@@ -141,6 +144,62 @@ else
 fi
 retry 8 gcloud secrets add-iam-policy-binding "$SECRET_NAME" --project="$PROJECT_ID" \
   --member="serviceAccount:$RUN_SA" --role=roles/secretmanager.secretAccessor --quiet >/dev/null
+
+# ------------------------------------------------- Maps Platform key ---------
+# Routes + Weather power the Daily Briefing. The key is restricted to those two
+# APIs and stored in Secret Manager; MAPS_API_KEY in app/.env wins if present.
+MAPS_SECRET="${MAPS_SECRET:-maps-api-key}"
+log "secret $MAPS_SECRET (Routes + Weather)"
+if [[ -z "${MAPS_API_KEY:-}" && -f app/.env ]]; then
+  MAPS_API_KEY="$(sed -n 's/^MAPS_API_KEY=//p' app/.env | head -1 | tr -d "\"'")"
+fi
+if [[ -z "${MAPS_API_KEY:-}" ]]; then
+  KEY_NAME="$(gcloud services api-keys list --project="$PROJECT_ID" \
+    --filter="displayName:automate-me maps" --format='value(name)' 2>/dev/null | head -1)"
+  if [[ -z "$KEY_NAME" ]]; then
+    echo "creating a restricted Maps key…"
+    KEY_NAME="$(gcloud services api-keys create --project="$PROJECT_ID" \
+      --display-name="automate-me maps (routes+weather)" \
+      --api-target=service=routes.googleapis.com \
+      --api-target=service=weather.googleapis.com \
+      --format='value(response.name)' 2>/dev/null | head -1)"
+    # `create` returns the operation; resolve the key resource either way.
+    [[ -z "$KEY_NAME" ]] && KEY_NAME="$(gcloud services api-keys list --project="$PROJECT_ID" \
+      --filter="displayName:automate-me maps" --format='value(name)' | head -1)"
+  fi
+  if [[ -n "$KEY_NAME" ]]; then
+    MAPS_API_KEY="$(gcloud services api-keys get-key-string "$KEY_NAME" --format='value(keyString)' 2>/dev/null)"
+  fi
+fi
+gcloud secrets describe "$MAPS_SECRET" --project="$PROJECT_ID" >/dev/null 2>&1 \
+  || gcloud secrets create "$MAPS_SECRET" --project="$PROJECT_ID" --replication-policy=automatic
+if [[ -n "${MAPS_API_KEY:-}" ]]; then
+  LATEST_MAPS="$(gcloud secrets versions access latest --secret="$MAPS_SECRET" --project="$PROJECT_ID" 2>/dev/null || true)"
+  if [[ "$LATEST_MAPS" == "$MAPS_API_KEY" ]]; then
+    echo "latest version already holds this key"
+  else
+    printf '%s' "$MAPS_API_KEY" | gcloud secrets versions add "$MAPS_SECRET" --project="$PROJECT_ID" --data-file=- >/dev/null
+    echo "new version added"
+  fi
+else
+  echo "no Maps key available — the Daily Briefing will report itself unavailable"
+fi
+retry 8 gcloud secrets add-iam-policy-binding "$MAPS_SECRET" --project="$PROJECT_ID" \
+  --member="serviceAccount:$RUN_SA" --role=roles/secretmanager.secretAccessor --quiet >/dev/null
+
+# --------------------------------------------- Daily Briefing schedule -------
+# 06:00 America/Sao_Paulo: the briefing is ready before the user asks.
+log "scheduler job briefing-daily"
+APP_URL="https://automate-me-$PROJECT_NUMBER.$REGION.run.app"
+if gcloud scheduler jobs describe briefing-daily --project="$PROJECT_ID" --location="$REGION" >/dev/null 2>&1; then
+  echo "exists"
+else
+  gcloud scheduler jobs create http briefing-daily --project="$PROJECT_ID" --location="$REGION" \
+    --schedule="0 6 * * *" --time-zone="America/Sao_Paulo" \
+    --uri="$APP_URL/app/api/briefing/run" --http-method=POST --attempt-deadline=120s \
+    --description="Automate.me Daily Briefing: plan the day before the user asks" >/dev/null \
+    || echo "scheduler job not created (non-fatal); the UI's 'Plan my day' button still works"
+fi
 
 # ------------------------------------------------------------- budget alert ---
 # Budget calls bill their API quota to the gcloud *default* project, where the
