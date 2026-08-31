@@ -241,6 +241,15 @@ func (d Deps) WriteBlocks(ctx context.Context, userID string, in blocksIn) (bloc
 
 // --- live registry -----------------------------------------------------------
 
+// Consultation is the graph's answer to a spoken question: the text it
+// produced and which specialists it went through to get there.
+type Consultation struct {
+	Answer   string   `json:"answer"`
+	Handled  []string `json:"handled_by"`
+	Model    string   `json:"reasoned_with"`
+	ToolsRun []string `json:"tools_run,omitempty"`
+}
+
 // LiveTool is one function the Live API voice session may call. Declaration is
 // the JSON-Schema the model sees; Invoke runs the same body the ADK graph runs.
 type LiveTool struct {
@@ -271,7 +280,29 @@ func prop(t, desc string) map[string]any { return map[string]any{"type": t, "des
 // anything that signs money: a voice command can approve a proposal, but the
 // purchase itself still goes through the non-agentic Trusted Surface.
 func (d Deps) LiveTools() map[string]LiveTool {
-	return map[string]LiveTool{
+	tools := map[string]LiveTool{
+		"consult_specialist": {
+			Declaration: map[string]any{
+				"name":        "consult_specialist",
+				"description": "Hand a question to the Automate.me specialist graph — the Routine Analyst, the Automation Advisor and the Day Planner, reasoning on Gemini 3.5 Flash. Use it for anything that needs judgement rather than a lookup: what to automate and why, how to set a recipe up, comparing options, explaining a number. Returns their answer for you to say out loud in your own words.",
+				"parameters": obj(map[string]any{
+					"question": prop("string", "The user's question, in their own words, with any context from the conversation they would expect you to carry over"),
+				}, "question"),
+			},
+			Invoke: func(ctx context.Context, uid string, a json.RawMessage) (any, error) {
+				in, err := decode[consultIn](a)
+				if err != nil {
+					return nil, err
+				}
+				if d.Consult == nil {
+					return nil, fmt.Errorf("the specialist graph is not available on this server")
+				}
+				if strings.TrimSpace(in.Question) == "" {
+					return nil, fmt.Errorf("question is required")
+				}
+				return d.Consult(ctx, uid, in.Question)
+			},
+		},
 		"get_life_pnl": {
 			Declaration: map[string]any{
 				"name":        "get_life_pnl",
@@ -364,12 +395,22 @@ func (d Deps) LiveTools() map[string]LiveTool {
 			},
 		},
 	}
+	// Without a graph runner the delegation tool would only ever fail; do not
+	// offer the model something it cannot use.
+	if d.Consult == nil {
+		delete(tools, "consult_specialist")
+	}
+	return tools
+}
+
+type consultIn struct {
+	Question string `json:"question"`
 }
 
 // LiveToolOrder fixes the order the declarations are sent in, so the model
 // sees the read-only tools before the ones that change something.
 var LiveToolOrder = []string{
-	"get_life_pnl", "get_daily_briefing", "add_routine_task",
+	"consult_specialist", "get_life_pnl", "get_daily_briefing", "add_routine_task",
 	"propose_automations", "plan_my_day", "approve_proposal", "write_departure_blocks",
 }
 
@@ -385,5 +426,6 @@ Rules that do not bend:
 - You may record an approval by voice, but you can never buy anything. Purchases are signed by the user on the consent screen. Say so plainly when a proposal is a purchase.
 - Call get_life_pnl before you talk about their overall numbers, and get_daily_briefing before you talk about their day.
 - Never invent an identifier. Before approving anything, call propose_automations so you are holding a real proposal_id.
+- You are the voice, not the brain. Anything that needs judgement — what to automate and why, how to set something up, comparing options, explaining a number, or a question you are unsure how to answer — goes to consult_specialist, which reasons on Gemini 3.5 Flash across the Routine Analyst, the Automation Advisor and the Day Planner. Say their answer in your own words, out loud and short. Use the direct tools only for a plain lookup or to carry out something the user just asked for.
 
 How to speak: this is a conversation, not a report. Short sentences. Lead with the number that matters. No markdown, no bullet lists, no reading identifiers out loud. Under 60 words unless they ask for detail. Match the user's language.`

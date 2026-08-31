@@ -4,6 +4,7 @@
 package agents
 
 import (
+	"context"
 	"fmt"
 
 	"google.golang.org/adk/v2/agent"
@@ -25,6 +26,9 @@ type Deps struct {
 	// Briefing is nil without MAPS_API_KEY; the day planner then says so.
 	Briefing *briefing.Builder
 	Blocks   briefing.BlockWriter
+	// Consult runs the agent graph (Gemini 3.5 Flash) for the voice session.
+	// Set after the graph is built, since it closes over the runner.
+	Consult func(ctx context.Context, userID, question string) (Consultation, error)
 }
 
 // brl formats integer centavos as "R$3,366.08" (en-US grouping, matching the

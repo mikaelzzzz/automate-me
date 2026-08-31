@@ -10,11 +10,19 @@ import type { Screen } from '../components/AgentRail'
 type Turn =
   | { id: number; kind: 'you'; text: string; open: boolean }
   | { id: number; kind: 'agent'; text: string; open: boolean }
-  | { id: number; kind: 'tool'; tool: string; status: 'running' | 'done' | 'error'; detail?: string }
+  | { id: number; kind: 'tool'; tool: string; status: 'running' | 'done' | 'error'; detail?: string; via?: string[]; model?: string }
 
 let seq = 1
 
+const AGENT_LABEL: Record<string, string> = {
+  automate_me: 'Orchestrator',
+  routine_analyst: 'Routine Analyst',
+  automation_advisor: 'Automation Advisor',
+  day_planner: 'Day Planner',
+}
+
 const TOOL_LABEL: Record<string, string> = {
+  consult_specialist: 'Asking the specialist graph',
   get_life_pnl: 'Reading your Life P&L',
   add_routine_task: 'Saving the routine and pricing it',
   propose_automations: 'Ranking automations by payback',
@@ -40,6 +48,15 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
   const [typed, setTyped] = useState('')
   const session = useRef<LiveSession | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
+  // Named by the server, so the page never claims a model it is not using.
+  const [models, setModels] = useState({ voice: 'gemini-3.1-flash-live-preview', reasoning: 'gemini-3.5-flash' })
+
+  useEffect(() => {
+    fetch('/app/api/live/session', { method: 'POST' })
+      .then((r) => r.json())
+      .then((c) => c?.model && setModels({ voice: c.model, reasoning: c.reasoning_model ?? 'gemini-3.5-flash' }))
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })
@@ -70,10 +87,13 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
         case 'tool-start':
           setTurns((xs) => [...xs, { id: seq++, kind: 'tool', tool: ev.tool ?? '', status: 'running' }])
           break
-        case 'tool-done':
-          setTurns((xs) => markTool(xs, ev.tool ?? '', 'done'))
+        case 'tool-done': {
+          const r = (ev.result ?? {}) as Record<string, unknown>
+          const via = Array.isArray(r['handled_by']) ? (r['handled_by'] as string[]) : undefined
+          setTurns((xs) => markTool(xs, ev.tool ?? '', 'done', undefined, via, r['reasoned_with'] as string))
           onDataChanged()
           break
+        }
         case 'tool-error':
           setTurns((xs) => markTool(xs, ev.tool ?? '', 'error', ev.text))
           break
@@ -105,13 +125,17 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
       <header className="shrink-0 rise">
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
           <div>
-            <p className="scap m-0">Live · Gemini Live API · gemini-3.1-flash-live</p>
+            <p className="scap m-0">
+              Live · voice <b className="font-semibold">{models.voice}</b> · reasoning{' '}
+              <b className="font-semibold">{models.reasoning}</b>
+            </p>
             <h1 className="display m-0 mt-1 leading-none" style={{ fontSize: 'clamp(1.5rem, 2.4vw, 1.95rem)', fontWeight: 600 }}>
               Talk to your agent
             </h1>
           </div>
-          <p className="text-ink-tertiary text-xs m-0 max-w-[330px] leading-relaxed">
-            Same tools the dashboard runs. It can capture, price, rank, approve and plan — it cannot buy anything.
+          <p className="text-ink-tertiary text-xs m-0 max-w-[350px] leading-relaxed">
+            The voice model handles the conversation and hands every judgement to the agent graph on{' '}
+            {models.reasoning}. It can capture, price, rank, approve and plan — it cannot buy anything.
           </p>
         </div>
 
@@ -238,12 +262,19 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
   )
 }
 
-function markTool(xs: Turn[], tool: string, status: 'done' | 'error', detail?: string): Turn[] {
+function markTool(
+  xs: Turn[],
+  tool: string,
+  status: 'done' | 'error',
+  detail?: string,
+  via?: string[],
+  model?: string,
+): Turn[] {
   const out = [...xs]
   for (let i = out.length - 1; i >= 0; i--) {
     const t = out[i]
     if (t.kind === 'tool' && t.tool === tool && t.status === 'running') {
-      out[i] = { ...t, status, detail }
+      out[i] = { ...t, status, detail, via, model }
       break
     }
   }
@@ -268,6 +299,14 @@ function TurnRow({ t, onGo }: { t: Turn; onGo: (s: Screen) => void }) {
           </span>
         )}
         <span>{TOOL_LABEL[t.tool] ?? t.tool.replace(/_/g, ' ')}</span>
+        {t.model && (
+          <span className="rounded-pill bg-gold-tint text-gold-deep px-2 py-0.5 text-[10.5px] font-medium">{t.model}</span>
+        )}
+        {t.via && t.via.length > 0 && (
+          <span className="text-ink-tertiary">
+            via {t.via.map((a) => AGENT_LABEL[a] ?? a.replace(/_/g, ' ')).join(' → ')}
+          </span>
+        )}
         {failed && <span className="text-alert">{t.detail}</span>}
         {done && (t.tool === 'plan_my_day' || t.tool === 'get_daily_briefing') && (
           <button onClick={() => onGo('briefing')} className="text-gold-deep cursor-pointer bg-transparent">

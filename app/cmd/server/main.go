@@ -5,15 +5,18 @@ package main
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 	_ "time/tzdata" // distroless has no zoneinfo; the briefing needs America/Sao_Paulo
 
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model/gemini"
+	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/server/adkrest"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
@@ -92,10 +95,26 @@ func main() {
 		Briefing: planner,
 		Blocks:   blocks,
 	}
+	// Build the graph first: the voice tools delegate into it, so it has to
+	// exist before the live tool set is frozen.
+	consult, err := mountChat(ctx, mux, deps)
+	if err != nil {
+		// Dashboard + consent must come up even without a model key.
+		slog.Warn("chat API disabled (no model?)", "err", err)
+	} else {
+		deps.Consult = consult
+	}
+
+	// Voice: the browser streams audio straight to the Gemini Live API and
+	// posts the model's function calls back to us, where they run the same
+	// tools the ADK graph runs. The Live model is the only conversational one
+	// available (3.1); everything that needs judgement is handed to the graph
+	// on gemini-3.5-flash through consult_specialist.
 	live := httpapi.LiveDeps{
 		Tools:             deps.LiveTools(),
 		Model:             cmp.Or(os.Getenv("LIVE_MODEL"), "gemini-3.1-flash-live-preview"),
 		Voice:             cmp.Or(os.Getenv("LIVE_VOICE"), "Zephyr"),
+		ReasoningModel:    graphModel(),
 		SystemInstruction: agents.LiveSystemInstruction,
 	}
 	if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
@@ -104,7 +123,8 @@ func main() {
 			slog.Warn("voice disabled: genai client", "err", err)
 		} else {
 			live.Client = gc
-			slog.Info("live voice enabled", "model", live.Model, "voice", live.Voice, "tools", len(live.Tools))
+			slog.Info("live voice enabled", "voice_model", live.Model, "reasoning_model", live.ReasoningModel,
+				"voice", live.Voice, "tools", len(live.Tools), "delegates_to_graph", deps.Consult != nil)
 		}
 	} else {
 		slog.Warn("GOOGLE_API_KEY not set; live voice disabled")
@@ -119,11 +139,6 @@ func main() {
 		UserID:   func(*http.Request) string { return store.DemoUserID },
 	}
 	api.Register(mux)
-
-	if err := mountChat(ctx, mux, deps); err != nil {
-		// Dashboard + consent must come up even without a model key.
-		slog.Warn("chat API disabled (no model?)", "err", err)
-	}
 
 	if dist := os.Getenv("WEB_DIST"); dist != "" {
 		if _, err := os.Stat(dist); err == nil {
@@ -140,25 +155,81 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps) error {
-	llm, err := gemini.NewModel(ctx, cmp.Or(os.Getenv("GEMINI_MODEL"), "gemini-3.5-flash"), &genai.ClientConfig{})
+func graphModel() string { return cmp.Or(os.Getenv("GEMINI_MODEL"), "gemini-3.5-flash") }
+
+// mountChat builds the agent graph, serves it over adkrest for the typed chat,
+// and returns a closure that runs the same graph one question at a time — the
+// voice session's route into Gemini 3.5 Flash.
+func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps) (
+	func(context.Context, string, string) (agents.Consultation, error), error,
+) {
+	model := graphModel()
+	llm, err := gemini.NewModel(ctx, model, &genai.ClientConfig{})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	root, err := agents.New(llm, d)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	sessions := session.InMemoryService()
 	srv, err := adkrest.NewServer(adkrest.ServerConfig{
 		AgentLoader:     agent.NewSingleLoader(root),
-		SessionService:  session.InMemoryService(),
+		SessionService:  sessions,
 		SSEWriteTimeout: 120 * time.Second,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	mux.Handle("/api/", http.StripPrefix("/api", srv))
-	return nil
+
+	r, err := runner.New(runner.Config{
+		AppName:           "automate_me_live",
+		Agent:             root,
+		SessionService:    session.InMemoryService(),
+		AutoCreateSession: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	consult := func(ctx context.Context, userID, question string) (agents.Consultation, error) {
+		ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		out := agents.Consultation{Model: model}
+		seen := map[string]bool{}
+		var answer strings.Builder
+		// One session per user keeps the graph's memory of the call.
+		for ev, err := range r.Run(ctx, userID, "live-"+userID,
+			genai.NewContentFromText(question, genai.RoleUser),
+			agent.RunConfig{StreamingMode: agent.StreamingModeNone}) {
+			if err != nil {
+				return out, err
+			}
+			if ev.Partial || ev.Content == nil {
+				continue
+			}
+			if ev.Author != "" && ev.Author != "user" && !seen["a:"+ev.Author] {
+				seen["a:"+ev.Author] = true
+				out.Handled = append(out.Handled, ev.Author)
+			}
+			for _, p := range ev.Content.Parts {
+				if p.FunctionCall != nil && !seen["t:"+p.FunctionCall.Name] {
+					seen["t:"+p.FunctionCall.Name] = true
+					out.ToolsRun = append(out.ToolsRun, p.FunctionCall.Name)
+				}
+				if ev.IsFinalResponse() && p.Text != "" {
+					answer.WriteString(p.Text)
+				}
+			}
+		}
+		out.Answer = strings.TrimSpace(answer.String())
+		if out.Answer == "" {
+			return out, fmt.Errorf("the specialist graph returned nothing")
+		}
+		return out, nil
+	}
+	return consult, nil
 }
 
 // spaHandler serves the built SPA with an index.html fallback for client-side

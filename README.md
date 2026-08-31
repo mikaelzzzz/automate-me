@@ -32,7 +32,11 @@ The loop is **Proof of Time**: capture → price → rank → **execute** → pr
 **You can just talk to it.** The **Talk** tab is a live call — a
 [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) session with a
 waveform drawn from the real audio on both ends, so you can see who has the
-floor: the browser streams
+floor. The voice model is the front of house, not the brain: `gemini-3.1-flash-live`
+is the only conversational Live model there is, so every judgement it makes is
+handed to the agent graph — **`gemini-3.5-flash`** — through `consult_specialist`,
+which runs the orchestrator and its sub-agents and hands back their answer to be
+spoken. The transcript names the model and the specialists on each hop: the browser streams
 microphone audio straight to Gemini over a WebSocket and hears a spoken reply
 back, while the model's function calls come home to `/app/api/live/tool` and run
 **the same tools the ADK graph runs** — same Value Engine, same store, same
@@ -40,6 +44,11 @@ Routes/Weather. The API key never reaches the browser; the server mints a
 single-use ephemeral token pinned to the model. Voice can capture a routine,
 price it, rank automations, approve one and plan your day — but it cannot buy
 anything: a purchase still has to be signed on the consent screen.
+
+| model | where it runs |
+|---|---|
+| `gemini-3.5-flash` | the ADK graph: orchestrator, Routine Analyst, Automation Advisor, Day Planner — typed chat, photo ingestion, and every voice judgement via `consult_specialist`. Also the merchant's A2A surface. |
+| `gemini-3.1-flash-live-preview` | the live audio front-end only: hearing, speaking, and deciding which tool or specialist to reach for |
 
 **The agent panel is the product.** It streams over SSE, so you watch the graph work: which sub-agent took the question, which tool is running, what it returned. Tool results become cards you can act on — approve a proposal, open the consent screen, read the receipts — without leaving the conversation.
 

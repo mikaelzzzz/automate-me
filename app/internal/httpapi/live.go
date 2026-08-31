@@ -34,6 +34,9 @@ type LiveDeps struct {
 	SystemInstruction string
 	// Voice is the prebuilt voice name for the spoken reply.
 	Voice string
+	// ReasoningModel is the model behind the agent graph the voice delegates
+	// to — surfaced so the UI can name the whole chain honestly.
+	ReasoningModel string
 }
 
 type liveSessionResponse struct {
@@ -44,6 +47,7 @@ type liveSessionResponse struct {
 	Voice             string           `json:"voice,omitempty"`
 	SystemInstruction string           `json:"system_instruction,omitempty"`
 	Tools             []map[string]any `json:"tools,omitempty"`
+	ReasoningModel    string           `json:"reasoning_model,omitempty"`
 	Reason            string           `json:"reason,omitempty"`
 }
 
@@ -77,7 +81,7 @@ func (h *Handler) liveSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, liveSessionResponse{
 		Available: true, Token: tok.Name, Model: h.Live.Model, Voice: h.Live.Voice,
-		SystemInstruction: h.Live.SystemInstruction, Tools: decls,
+		ReasoningModel: h.Live.ReasoningModel, SystemInstruction: h.Live.SystemInstruction, Tools: decls,
 	})
 }
 
