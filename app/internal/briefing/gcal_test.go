@@ -138,6 +138,7 @@ func TestIsRemoteLocation(t *testing.T) {
 		" https://us06web.zoom.us/j/88011712419",
 		"https://meet.google.com/qzm-cmtt-eax",
 		"teams.microsoft.com/l/meetup-join/x",
+		"httpslyGCVZJ9mlrWqkUML5GlQbsL7HkP3k.1?pwd=lyGCVZJ9mlrWqkUML5GlQbsL7HkP3k.1", // link pasted without its scheme
 		"Online",
 		"Remoto — sala 2",
 	}
@@ -146,7 +147,7 @@ func TestIsRemoteLocation(t *testing.T) {
 			t.Errorf("isRemoteLocation(%q) = false, want true", s)
 		}
 	}
-	physical := []string{"Av. Paulista 1578, Bela Vista", "Vila Prudente, São Paulo", "Rua Zoom 40"}
+	physical := []string{"Av. Paulista 1578, Bela Vista", "Vila Prudente, São Paulo", "Rua Zoom 40", "Consultorio Dra Marina"}
 	for _, s := range physical {
 		if isRemoteLocation(s) {
 			t.Errorf("isRemoteLocation(%q) = true, want false", s)

@@ -59,6 +59,14 @@ func isRemoteLocation(loc string) bool {
 			return true
 		}
 	}
+	// A meeting link pasted without its scheme ("httpslyGCVZ…?pwd=x"): query
+	// syntax, or one long unbroken token. No street address looks like that.
+	if strings.ContainsAny(s, "?=") {
+		return true
+	}
+	if !strings.ContainsAny(s, " ,") && len(s) > 24 {
+		return true
+	}
 	// "Online", "Remoto", "Sala virtual" and friends.
 	for _, w := range []string{"online", "remoto", "remote", "virtual", "video call", "videochamada"} {
 		if s == w || strings.HasPrefix(s, w+" ") {
