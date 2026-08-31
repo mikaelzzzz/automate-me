@@ -5,6 +5,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"log"
 	"log/slog"
@@ -242,9 +243,19 @@ func main() {
 		}
 	}
 
+	// Gate: APP_PASSWORD turns the whole surface into a credentialed one. Judges
+	// get a browser prompt and a password; without the variable the app stays
+	// open, which is what local development and the seeded demo want.
+	var handler http.Handler = mux
+	if pass := os.Getenv("APP_PASSWORD"); pass != "" {
+		user := cmp.Or(os.Getenv("APP_USER"), "reviewer")
+		handler = basicAuth(mux, user, pass)
+		slog.Info("basic auth enabled", "user", user)
+	}
+
 	port := cmp.Or(os.Getenv("PORT"), "8080")
 	slog.Info("automate-me listening", "port", port, "merchant", merchantURL)
-	srv := &http.Server{Addr: ":" + port, Handler: mux, ReadTimeout: 30 * time.Second, WriteTimeout: 300 * time.Second}
+	srv := &http.Server{Addr: ":" + port, Handler: handler, ReadTimeout: 30 * time.Second, WriteTimeout: 300 * time.Second}
 	log.Fatal(srv.ListenAndServe())
 }
 
@@ -339,6 +350,30 @@ func mountChat(ctx context.Context, mux *http.ServeMux, d agents.Deps, sessions 
 		return out, nil
 	}
 	return consult, nil
+}
+
+// basicAuth puts one password in front of everything except the health check,
+// which Cloud Run itself calls and which reveals nothing.
+//
+// Comparison is constant-time: a password compared byte by byte with an early
+// return leaks its length and prefix to anyone willing to time the answer.
+func basicAuth(next http.Handler, user, pass string) http.Handler {
+	wantUser, wantPass := []byte(user), []byte(pass)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		u, p, ok := r.BasicAuth()
+		if ok &&
+			subtle.ConstantTimeCompare([]byte(u), wantUser) == 1 &&
+			subtle.ConstantTimeCompare([]byte(p), wantPass) == 1 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", `Basic realm="Automate.me", charset="UTF-8"`)
+		http.Error(w, "credentials required", http.StatusUnauthorized)
+	})
 }
 
 // spaHandler serves the built SPA with an index.html fallback for client-side

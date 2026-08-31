@@ -33,6 +33,14 @@ prove it.**
 
 The loop is **Proof of Time**: capture → price → rank → execute → prove.
 
+**Price your hour first.** Setup asks the one thing nothing can be computed without, and asks it
+once: what an hour of your life is worth. Type the rate, or type what you earn and how many hours
+you work and watch it derive — R$18,000 a month over a 45-hour week is R$92.31 an hour, over 52/12
+weeks, the same conversion the engine uses. The money moves while you type: the routines already on
+record are re-priced in front of you, and the dishwasher's payback goes from 2.2 months to 1.2. A
+rate nobody can find is a rate nobody trusts, so it sits at the top of the P&L, one click from
+being changed — and the agent can change it too, mid-sentence, by voice.
+
 **Capture.** You tell the agent your routine in chat or by voice, or you photograph a handwritten
 list, a pile of boletos, a school note. Gemini reads the pixels; the analyst confirms the numbers
 with you before anything is saved.
@@ -61,6 +69,19 @@ stops and asks for a signature.
 
 **Prove.** The Savings Ledger accumulates hours and reais bought back, with the signed AP2 receipt
 attached to every purchase.
+
+**And it remembers you.** Facts about how you live are extracted from every conversation into
+**Vertex AI Agent Engine Memory Bank**, scoped to you — that you teach English online in
+back-to-back evening Zoom classes, that you want double confirmation above R$500, that you prefer
+short answers. A voice call has no history of its own, so those facts are recalled and put in front
+of the model before the first word, and the Talk tab shows you exactly what it walked in knowing.
+What you say out loud in one call is what the typed chat knows in the next.
+
+Hanging up is not the end of the conversation either. The transcript persists, so reopening Talk
+picks up where you left off, and the graph reads the finished call and writes down the routines you
+described — say "forty minutes a day organising class materials" on a call and it is a tracked,
+priced routine on your P&L before you close the tab. It is told to save nothing when you were only
+asking questions: inventing a routine would put a number on the P&L you never said.
 
 And the São Paulo half — the reason this is not just a productivity toy. Every morning the agent
 builds a **Daily Briefing**: when to leave for each appointment, what the traffic is costing you
@@ -105,6 +126,12 @@ Flood risk comes from two layers: live public weather alerts whose polygon your 
 metres of the route polyline. August is dry season here, so the historic layer is what keeps the
 feature honest when there is nothing live to show.
 
+**Sessions and memory both outlive the process.** ADK sessions live in **Firestore** behind a
+`session.Service` written against the contract the built-in ones honour — partial events never
+persist, `app:`/`user:`/`temp:` state is scoped by prefix and `temp:` is dropped — so a conversation
+survives a revision rollover or a cold start. ADK's own conformance suite runs against it. Spoken
+calls persist the same way.
+
 **Google Cloud:** Cloud Run (two services) · Cloud Build · Artifact Registry · Secret Manager ·
 Cloud Scheduler (the 06:00 briefing) · Firestore (agent sessions) · Vertex AI Memory Bank ·
 Google Maps Platform · Cloud Logging · Cloud Trace.
@@ -133,6 +160,14 @@ the departure time for the second.
 deterministic engine. A model that hallucinates your savings destroys the only thing this product
 sells, so the model never gets to produce one.
 
+**An agent will tell you it did something it did not do.** Asked in chat to change my hourly rate,
+the orchestrator answered "I have updated your hourly rate to R$120" — and called no tool at all. It
+owned the conversation but owned no profile tool, so it answered from memory, fluently and wrongly.
+Routing that to a sub-agent was the bug: a person states their rate in the middle of any topic. The
+orchestrator carries those tools itself now and is told never to claim it saved something a tool did
+not save. The lesson generalises past this bug — a confident sentence is not evidence of a write, and
+the only way to know is to check the store.
+
 **The AP2 threat model forces architecture, not policy.** The signing key lives in a package no LLM
 code path can reach. Making the trusted surface non-agentic *by construction* was far easier to
 reason about than trying to constrain a model with prompting.
@@ -156,6 +191,14 @@ paths, not the loud ones.
 **A claim the code did not back.** One recipe was classed as *executable* with a report-generation
 capability, but nothing ever executed it. I cut it rather than deferring it. A catalog that
 promises what it cannot do is worse than a smaller catalog.
+
+**Reading a calendar taught me the product was aimed slightly wrong.** I wired the Daily Briefing to
+a real Google Calendar and read a real week: 46 appointments, and **zero** with a street address.
+Twenty-one were Zoom or Meet links; the rest had no location at all. The routing, the traffic
+pricing, the flood layer — none of it had anything to say about that person's week. So the calendar
+reader now classifies every row as a trip, screen time, or noise, and says so plainly rather than
+showing an empty page. One location was a Zoom URL that had lost its `https://` on the way in, and
+would have been sent to the Routes API as a street address.
 
 **Two agents, one of them private.** Cloud Run URLs are computable from the project number before
 the first deploy, which is what let the app be configured with the merchant's address in the very

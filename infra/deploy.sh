@@ -100,6 +100,18 @@ if [[ -z "$ONLY" || "$ONLY" == app ]]; then
     echo "calendar: none — the briefing runs on seeded appointments"
   fi
 
+  # APP_PASSWORD puts a browser credential prompt in front of everything but
+  # /health. Judges get a user and a password; without the secret the app is
+  # open, which is what local development wants.
+  APP_SECRETS="GOOGLE_API_KEY=$SECRET_NAME:latest,MAPS_API_KEY=maps-api-key:latest"
+  if gcloud secrets describe app-password --project="$PROJECT_ID" >/dev/null 2>&1; then
+    APP_SECRETS="$APP_SECRETS,APP_PASSWORD=app-password:latest"
+    APP_ENV="$APP_ENV@APP_USER=${APP_USER:-reviewer}"
+    echo "auth: basic, user ${APP_USER:-reviewer} (secret app-password)"
+  else
+    echo "auth: none — the app is open to anyone with the URL"
+  fi
+
   log "deploy automate-me (public)"
   gcloud run deploy automate-me --project="$PROJECT_ID" --region="$REGION" \
     --image="$REPO/app:$TAG" \
@@ -108,7 +120,7 @@ if [[ -z "$ONLY" || "$ONLY" == app ]]; then
     --min-instances="$MIN_INSTANCES" --max-instances=1 \
     --memory=512Mi --cpu=1 --timeout=300 \
     --set-env-vars="$APP_ENV" \
-    --set-secrets="GOOGLE_API_KEY=$SECRET_NAME:latest,MAPS_API_KEY=maps-api-key:latest" \
+    --set-secrets="$APP_SECRETS" \
     --labels="app=automate-me,service=app" --quiet \
   || { echo "if this failed on allUsers: org policy iam.allowedPolicyMemberDomains blocks public services;" >&2
        echo "run infra/gcp-setup.sh (sets a project-level override) and redeploy." >&2; exit 1; }
