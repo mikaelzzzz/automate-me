@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"google.golang.org/genai"
 
 	"automate-me/app/internal/agents"
+	"automate-me/app/internal/calls"
 	"automate-me/app/internal/memorybank"
 )
 
@@ -43,6 +45,12 @@ type LiveDeps struct {
 	// Memory recalls what earlier conversations taught us about this person,
 	// and stores what this one does. Nil disables both.
 	Memory *memorybank.Service
+	// Calls persists the spoken transcript, so closing the tab does not end
+	// the conversation. Nil keeps calls in the browser only.
+	Calls calls.Store
+	// Harvest runs the agent graph over a finished call so the routines the
+	// user described out loud become tracked, priced tasks. Nil disables it.
+	Harvest func(ctx context.Context, userID, question string) (agents.Consultation, error)
 }
 
 type liveSessionResponse struct {
@@ -173,28 +181,126 @@ type liveRememberRequest struct {
 	} `json:"turns"`
 }
 
-// liveRemember takes the transcript of a finished call and hands it to Memory
-// Bank. The Live API keeps its turns in the browser, so this is the only way
-// a spoken conversation reaches the same memory the typed one writes to.
-func (h *Handler) liveRemember(w http.ResponseWriter, r *http.Request) {
-	if h.Live.Memory == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"stored": false, "reason": "memory is not configured"})
+type liveRememberResponse struct {
+	Stored bool   `json:"stored"`
+	Turns  int    `json:"turns"`
+	Reason string `json:"reason,omitempty"`
+	// Harvested is what the graph took from the call and wrote down: the
+	// routines the user described out loud, now tracked and priced.
+	Harvested string   `json:"harvested,omitempty"`
+	ToolsRun  []string `json:"tools_run,omitempty"`
+}
+
+// liveTranscript returns the calls this user has had, so reopening Talk shows
+// the conversation instead of an empty room.
+func (h *Handler) liveTranscript(w http.ResponseWriter, r *http.Request) {
+	if h.Live.Calls == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"turns": []calls.Turn{}, "persisted": false})
 		return
 	}
+	turns, err := h.Live.Calls.Recent(r.Context(), h.UserID(r), 60)
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	if turns == nil {
+		turns = []calls.Turn{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"turns": turns, "persisted": true})
+}
+
+// liveForget drops the stored transcript. A voice log is a personal record;
+// deleting it has to be one button, not a support request.
+func (h *Handler) liveForget(w http.ResponseWriter, r *http.Request) {
+	if h.Live.Calls == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"cleared": false})
+		return
+	}
+	if err := h.Live.Calls.Clear(r.Context(), h.UserID(r)); err != nil {
+		httpErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": true})
+}
+
+// liveRemember takes the transcript of a finished call and does three things
+// with it: stores it so the tab can be closed, hands it to Memory Bank so the
+// agent remembers the person, and runs it past the graph so the routines
+// described out loud become tracked tasks on the P&L.
+func (h *Handler) liveRemember(w http.ResponseWriter, r *http.Request) {
 	var req liveRememberRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	t := memorybank.Transcript{UserID: h.UserID(r)}
-	for _, turn := range req.Turns {
-		t.Turns = append(t.Turns, memorybank.Turn{Role: turn.Role, Text: turn.Text})
+	uid := h.UserID(r)
+	var (
+		turns      []calls.Turn
+		transcript strings.Builder
+	)
+	now := time.Now().UTC()
+	for i, t := range req.Turns {
+		text := strings.TrimSpace(t.Text)
+		if text == "" {
+			continue
+		}
+		role := t.Role
+		if role != "user" && role != "model" {
+			role = "user"
+		}
+		turns = append(turns, calls.Turn{Role: role, Text: text, At: now.Add(time.Duration(i) * time.Millisecond)})
+		who := "User"
+		if role == "model" {
+			who = "Agent"
+		}
+		fmt.Fprintf(&transcript, "%s: %s\n", who, text)
 	}
-	if err := h.Live.Memory.AddTranscript(r.Context(), t); err != nil {
-		slog.Warn("memory: could not store the call", "err", err)
-		writeJSON(w, http.StatusOK, map[string]any{"stored": false, "reason": err.Error()})
+	if len(turns) == 0 {
+		writeJSON(w, http.StatusOK, liveRememberResponse{Reason: "nothing was said"})
 		return
 	}
-	slog.Info("memory: call stored", "turns", len(t.Turns))
-	writeJSON(w, http.StatusOK, map[string]any{"stored": true, "turns": len(t.Turns)})
+
+	out := liveRememberResponse{Turns: len(turns)}
+	if h.Live.Calls != nil {
+		if err := h.Live.Calls.Append(r.Context(), uid, turns); err != nil {
+			slog.Warn("calls: could not persist the transcript", "err", err)
+			out.Reason = err.Error()
+		} else {
+			out.Stored = true
+		}
+	}
+	if h.Live.Memory != nil {
+		t := memorybank.Transcript{UserID: uid}
+		for _, turn := range turns {
+			t.Turns = append(t.Turns, memorybank.Turn{Role: turn.Role, Text: turn.Text})
+		}
+		if err := h.Live.Memory.AddTranscript(r.Context(), t); err != nil {
+			slog.Warn("memory: could not store the call", "err", err)
+		}
+	}
+	// Harvest: the call is over, so this can take its time on the graph.
+	if h.Live.Harvest != nil {
+		res, err := h.Live.Harvest(r.Context(), uid, harvestPrompt+transcript.String())
+		switch {
+		case err != nil:
+			slog.Warn("harvest: the graph could not read the call", "err", err)
+		default:
+			out.Harvested, out.ToolsRun = res.Answer, res.ToolsRun
+		}
+	}
+	slog.Info("call stored", "turns", len(turns), "persisted", out.Stored, "harvest_tools", out.ToolsRun)
+	writeJSON(w, http.StatusOK, out)
 }
+
+// harvestPrompt turns a transcript into tracked routines — and into nothing at
+// all when the user only asked questions. Inventing a routine would put a
+// number on the P&L that the user never said.
+const harvestPrompt = `The call below just ended. Read it and act on it, silently:
+
+1. For every routine the user described as something they actually do — with a duration and a frequency, either stated or agreed during the call — call add_routine_task once. Use their own words for the name. Do not invent a routine, a duration or a frequency: if they only asked questions, browsed products or chatted, save nothing.
+2. Do not save anything they explicitly rejected or were only considering.
+
+Then answer in one short sentence naming what you saved, or "Nothing to save from this call." Nobody is listening; this is a write-up, not a reply.
+
+TRANSCRIPT:
+`

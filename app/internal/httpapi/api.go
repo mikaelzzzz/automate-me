@@ -51,6 +51,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /app/api/live/session", h.liveSession)
 	mux.HandleFunc("POST /app/api/live/tool", h.liveTool)
 	mux.HandleFunc("POST /app/api/live/remember", h.liveRemember)
+	mux.HandleFunc("GET /app/api/live/transcript", h.liveTranscript)
+	mux.HandleFunc("DELETE /app/api/live/transcript", h.liveForget)
 }
 
 type briefingResponse struct {

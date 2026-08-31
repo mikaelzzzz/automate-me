@@ -32,8 +32,13 @@ const AGENT_LABEL: Record<string, string> = {
 function productsFrom(answer: string): Product[] {
   const out: Product[] = []
   for (const line of answer.split('\n')) {
-    const link = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/.exec(line)
+    // Markdown link when the scout formats one, a bare URL when it does not —
+    // a link the user cannot click is the same as no link at all.
+    const link =
+      /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/.exec(line) ??
+      (/(https?:\/\/[^\s)]+)/.exec(line) as RegExpExecArray | null)
     if (!link) continue
+    if (link.length === 2) link[2] = link[1]
     const label = line
       .replace(/\[[^\]]*\]\([^)]*\)/g, '')
       .replace(/[*_`]/g, '')
@@ -82,6 +87,28 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
   // so the caller can see it rather than be surprised by it.
   const [memories, setMemories] = useState<string[]>([])
   const [showMemories, setShowMemories] = useState(false)
+  // What the graph wrote down from the call that just ended.
+  const [harvest, setHarvest] = useState<{ text: string; wrote: boolean } | null>(null)
+  const [harvesting, setHarvesting] = useState(false)
+  // Turns restored from storage are already saved; only this call is sent up.
+  const restoredCount = useRef(0)
+
+  // What was said before: the Live API keeps a call in this tab and nowhere
+  // else, so the transcript comes back from the server, not from the socket.
+  useEffect(() => {
+    fetch('/app/api/live/transcript')
+      .then((r) => r.json())
+      .then((d: { turns?: { role: string; text: string }[] }) => {
+        const past = (d.turns ?? [])
+          .filter((t) => t.text?.trim())
+          .map((t) => ({ id: seq++, kind: t.role === 'model' ? ('agent' as const) : ('you' as const), text: t.text, open: false }))
+        if (past.length > 0) {
+          restoredCount.current = past.length
+          setTurns((xs) => [...past, ...xs])
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     fetch('/app/api/live/session', { method: 'POST' })
@@ -155,22 +182,29 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
     // Hand the call to Memory Bank: the Live API keeps its turns in this tab,
     // so this is how a spoken conversation reaches the same memory the typed
     // one writes to. Best effort — a failed save must not break ending a call.
-    const spoken = turns.flatMap((t) =>
+    const spoken = turns.slice(restoredCount.current).flatMap((t) =>
       (t.kind === 'you' || t.kind === 'agent') && t.text.trim()
         ? [{ role: t.kind === 'you' ? 'user' : 'model', text: t.text.trim() }]
         : [],
     )
     if (spoken.length === 0) return
+    setHarvesting(true)
     try {
-      await fetch('/app/api/live/remember', {
+      const res = await fetch('/app/api/live/remember', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ turns: spoken }),
-      })
+      }).then((r) => r.json())
+      restoredCount.current = turns.length
+      const wrote = Array.isArray(res?.tools_run) && res.tools_run.includes('add_routine_task')
+      if (res?.harvested) setHarvest({ text: String(res.harvested), wrote })
+      if (wrote) onDataChanged()
     } catch {
-      /* the conversation still happened; the memory of it is not worth an error banner */
+      /* the conversation still happened; the record of it is not worth an error banner */
+    } finally {
+      setHarvesting(false)
     }
-  }, [turns])
+  }, [turns, onDataChanged])
 
   useEffect(() => () => void session.current?.stop(), [])
 
@@ -267,6 +301,29 @@ export function LiveVoicePage({ onDataChanged, onGo }: { onDataChanged: () => vo
       </header>
 
       {error && <div className="mt-3 shrink-0 bg-alert-tint text-alert-deep rounded-xl px-4 py-3 text-sm">{error}</div>}
+
+      {(harvesting || harvest) && (
+        <div className="mt-3 shrink-0 bg-gold-tint/50 border-subtle rounded-xl px-4 py-2.5 text-sm flex items-center gap-2.5">
+          {harvesting ? (
+            <>
+              <span className="ring shrink-0" aria-hidden />
+              <span className="text-ink-secondary">Reading the call back and writing down what you described…</span>
+            </>
+          ) : (
+            <>
+              <span className="text-ink-secondary min-w-0 flex-1">{harvest?.text}</span>
+              {harvest?.wrote && (
+                <button onClick={() => onGo('pnl')} className="shrink-0 text-gold-deep font-medium cursor-pointer bg-transparent">
+                  see it on the P&L →
+                </button>
+              )}
+              <button onClick={() => setHarvest(null)} className="shrink-0 text-ink-tertiary cursor-pointer bg-transparent" aria-label="Dismiss">
+                ✕
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* the conversation gets the room — this is a chat, not a control panel */}
       <section ref={scroller} className="flex-1 min-h-0 overflow-y-auto chat-scroll space-y-3 py-5">

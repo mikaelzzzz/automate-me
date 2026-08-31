@@ -25,6 +25,7 @@ import (
 
 	"automate-me/app/internal/agents"
 	"automate-me/app/internal/briefing"
+	"automate-me/app/internal/calls"
 	"automate-me/app/internal/fsession"
 	"automate-me/app/internal/httpapi"
 	"automate-me/app/internal/memorybank"
@@ -134,6 +135,18 @@ func main() {
 		slog.Warn("MEMORY_ENGINE not set; the agent remembers nothing between sessions")
 	}
 
+	// Spoken calls persist wherever the sessions do: closing the Talk tab
+	// should not be how a conversation ends.
+	var callLog calls.Store = calls.NewMemory()
+	if project := os.Getenv("FIRESTORE_PROJECT"); project != "" {
+		cl, err := calls.NewFirestore(ctx, project, os.Getenv("FIRESTORE_DATABASE"), os.Getenv("FIRESTORE_PREFIX"))
+		if err != nil {
+			log.Fatalf("firestore call log: %v", err)
+		}
+		defer cl.Close()
+		callLog = cl
+	}
+
 	// Sessions: Firestore when configured, so a conversation survives the
 	// revision that hosted it; in-memory otherwise.
 	sessions := session.InMemoryService()
@@ -191,6 +204,10 @@ func main() {
 		ReasoningModel:    graphModel(),
 		SystemInstruction: agents.LiveSystemInstruction,
 		Memory:            mem,
+		Calls:             callLog,
+		// The graph reads the finished call and writes down the routines the
+		// user described out loud. Same runner as consult_specialist.
+		Harvest: consult,
 	}
 	if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
 		gc, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: key, Backend: genai.BackendGeminiAPI})
