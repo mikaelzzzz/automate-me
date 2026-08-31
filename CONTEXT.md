@@ -1,5 +1,37 @@
 # CONTEXT.md — deltas por sessão
 
+## 2. ATUALIZACAO 2026-08-31 — GCP, deploy, Briefing, redesign Command Rail e voz Live API
+
+**O que foi feito:**
+- **Infra GCP do zero** (`infra/gcp-setup.sh` + `deploy.sh` + `cloudbuild.yaml`): projeto `automate-me-hack` (nº 288504867090, us-central1), billing, 14 APIs, Artifact Registry, SA `automate-me-run`, Secret Manager (`google-api-key`, `maps-api-key`), budget R$500, job Scheduler `briefing-daily` 06:00 BRT. Idempotente — re-rodar diz "already/exists".
+- **Deploy funcionando**: `merchant-agent` privado (só a SA do app tem `run.invoker`; app autentica com ID token via `MERCHANT_AUTH=idtoken`) + `automate-me` público. Ambos `--max-instances=1` (estado em memória). Hoje na rev **00007**.
+- **Daily Briefing (F5)** em `app/internal/briefing/`: Routes API com `departureTime` futuro em duas passadas, trânsito precificado `(duration − staticDuration) × rate`, Weather hourly + publicAlerts, e camada **GeoSampa** (192 pontos de alagamento da Defesa Civil, embutidos) casada a ≤150 m da polyline. Endpoints `/app/api/briefing[/run|/{id}/block]`, sub-agente `day_planner`.
+- **Ingestão de foto (F1)**: composer anexa imagem (≤1280px JPEG → `inlineData`), analyst lê lista manuscrita/boletos e salva as tarefas. Testado: 7 itens extraídos de uma lista.
+- **Redesign "Command Rail"** (wireframe 1a do Claude Design): rail de capacidades à esquerda, feed "Agent activity" derivado de estado real à direita, **tabela de payback** como espinha do P&L, tela Proposals, consent split com a cadeia AP2. Paleta da marca (teal `#13353F`, dourado `#BC9A75`), Fraunces nos números.
+- **Voz em tempo real (Gemini Live API)**: aba **Talk**, waveform em canvas alimentada por `AnalyserNode` nos dois lados, transcrição, barge-in. Browser fala direto com a Live API via **token efêmero de uso único** (chave nunca vai pro browser); function calls voltam pra `POST /app/api/live/tool`.
+- **`internal/agents/core.go`**: corpos das tools extraídos dos closures do ADK → grafo e voz executam a mesma função. `internal/proposer` idem para o matching catálogo↔engine (usado pelo tool e pelo seed).
+- **Regra do hackathon (Gemini 3.5+) resolvida**: não existe modelo Live conversacional 3.5 (só `3.5-transcribe-live` e `3.5-live-translate`, ambos especializados — verificado na API de modelos). Solução: tool **`consult_specialist`** entrega qualquer julgamento ao grafo ADK em `gemini-3.5-flash`, que roteia pros sub-agentes e devolve a resposta pra voz falar. UI mostra a cadeia.
+- **README + diagramas** (arquitetura e sequência AP2, mermaid + PNG em `docs/design/`).
+
+**Deploys:** `automate-me-00007-4xg` e `merchant-agent-00007-tcs`. App público: https://automate-me-288504867090.us-central1.run.app · merchant privado (403 sem ID token). Repo público: https://github.com/mikaelzzzz/automate-me (main = `ffce118`).
+
+**Gotchas:**
+- Cota de billing era 5/5 projetos → `corretorautomatico` (dormente) foi desvinculado. `corretorzapsignmikael` também dormente se precisar de outra vaga.
+- Org flowmika.com tem Domain Restricted Sharing → `allUsers` era rejeitado e `gcloud run deploy --allow-unauthenticated` só **avisa**. `gcp-setup.sh` põe override `allowAll` **só neste projeto** (propaga em ~2 min); `deploy.sh` faz o binding explícito e fatal.
+- Budget precisa ser na moeda da conta (**BRL**), não USD.
+- `go.mod` usa `replace ../ap2core` → Dockerfiles buildam com **contexto na raiz** do repo, nunca `--source app`.
+- mermaid: `initialize()` antes de qualquer `await`, senão o auto-run pinta com tema default; e esperar `document.fonts.ready` senão os títulos cortam.
+- Porta 8081 é do Expo do Ecosistema-Karol nesta máquina → merchant local em `PORT=8082/8083`.
+- Sessão paralela trabalhou em `.claude/worktrees/hackathon-checklist` (branch `worktree-hackathon-checklist`), produziu LICENSE + SUBMISSION_ANSWERS.md + SUBMISSION_CHECKLIST.md. `.claude/worktrees/` está no .gitignore.
+
+**Pendências:**
+1. **Conectar a agenda real** (próximo passo): `CALENDAR_ID` é lido em `app/cmd/server/main.go:76` e `internal/briefing/gcal.go` está pronto (ADC + `CalendarEventsScope`), mas **nada disso está ligado** — falta habilitar `calendar-json.googleapis.com`, compartilhar um Google Calendar com `automate-me-run@automate-me-hack.iam.gserviceaccount.com` ("Fazer alterações em eventos") e passar `CALENDAR_ID` no `--set-env-vars` do `infra/deploy.sh`. Hoje os blocos saem como `simulated`.
+2. Compromissos do briefing são **seed** (`briefing.DemoAppointments`) — ler eventos reais da agenda é o passo seguinte ao item 1.
+3. Store é memória (1 instância por serviço). Firestore `session.Service` continua roadmap.
+4. Calendar Watcher (F7), Teams report (F8), Plan Guardian (F10) não implementados — telas Teams/Guardian dizem o que farão.
+5. Vídeo 4min + submissão Devpost (respostas prontas em `SUBMISSION_ANSWERS.md`).
+6. Custo: 2 Cloud Run com `min-instances=1` ≈ R$2-3/dia. Depois do hackathon: `MIN_INSTANCES=0 make deploy`.
+
 ## 1. ATUALIZACAO 2026-08-16 — Fundação completa: specs, AP2 ponta a ponta, dashboard Crextio
 
 **O que foi feito:**
