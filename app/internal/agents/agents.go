@@ -21,6 +21,7 @@ import (
 
 	"automate-me/app/internal/briefing"
 	"automate-me/app/internal/memorybank"
+	"automate-me/app/internal/profile"
 	"automate-me/app/internal/store"
 	"automate-me/app/internal/trusted"
 )
@@ -103,6 +104,56 @@ func (d Deps) addTask() (tool.Tool, error) {
 		Description: "Persist a routine task the user confirmed (name, minutes, frequency). Upserts: pass task_id (from get_life_pnl) to update an existing task; a task with the same name is updated, never duplicated. Returns the monthly Cost of Inaction computed by the deterministic Value Engine.",
 	}, func(ctx agent.Context, in addTaskIn) (addTaskOut, error) {
 		return d.AddTask(ctx, d.UserID(ctx), in)
+	})
+}
+
+// setProfileIn is the model-facing shape: money in reais, because that is how
+// a person says it out loud. Conversion to centavos happens here, once, before
+// anything deterministic sees it.
+type setProfileIn struct {
+	Name               string  `json:"name,omitempty"`
+	HourlyRateReais    float64 `json:"hourly_rate_reais,omitempty"`
+	MonthlyIncomeReais float64 `json:"monthly_income_reais,omitempty"`
+	HoursPerWeek       float64 `json:"hours_per_week,omitempty"`
+	HomeAddress        string  `json:"home_address,omitempty"`
+	WorkAddress        string  `json:"work_address,omitempty"`
+	WorkSetup          string  `json:"work_setup,omitempty"`
+}
+
+func (in setProfileIn) toInput() profile.Input {
+	return profile.Input{
+		Name:               in.Name,
+		HourlyRateCents:    reaisToCents(in.HourlyRateReais),
+		MonthlyIncomeCents: reaisToCents(in.MonthlyIncomeReais),
+		HoursPerWeek:       in.HoursPerWeek,
+		HomeAddress:        in.HomeAddress,
+		WorkAddress:        in.WorkAddress,
+		WorkSetup:          in.WorkSetup,
+	}
+}
+
+func reaisToCents(v float64) int64 {
+	if v <= 0 {
+		return 0
+	}
+	return int64(v*100 + 0.5)
+}
+
+func (d Deps) getProfile() (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "get_profile",
+		Description: "What the app knows about the user: the price of their hour, how that price was set, where they live and work, and what their tracked routine costs per month at that rate. Call it before asking them anything you may already know.",
+	}, func(ctx agent.Context, _ struct{}) (profileOut, error) {
+		return d.GetProfile(ctx, d.UserID(ctx))
+	})
+}
+
+func (d Deps) setProfile() (tool.Tool, error) {
+	return functiontool.New(functiontool.Config{
+		Name:        "set_profile",
+		Description: "Record what the user told you about themselves and re-price everything already tracked. Price the hour either directly (hourly_rate_reais) or from what they earn (monthly_income_reais with hours_per_week) — never both. Send only the fields they actually gave you.",
+	}, func(ctx agent.Context, in setProfileIn) (profileOut, error) {
+		return d.SetProfile(ctx, d.UserID(ctx), in.toInput())
 	})
 }
 
@@ -281,6 +332,14 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	getProf, err := d.getProfile()
+	if err != nil {
+		return nil, err
+	}
+	setProf, err := d.setProfile()
+	if err != nil {
+		return nil, err
+	}
 	propose, err := d.proposeAutomations()
 	if err != nil {
 		return nil, err
@@ -306,8 +365,8 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 		Name:        "routine_analyst",
 		Description: "Interviews the user about their routine, estimates task durations from benchmarks, confirms numbers, and maintains the Life P&L.",
 		Model:       llm,
-		Instruction: "You capture the user's routine. Photos: when the user sends an image (handwritten to-do list, paper calendar, pile of boletos, school note, whiteboard), read every item on it, turn each into a routine task with your best estimate of minutes and times per month, list them in one short message for confirmation, and after the user confirms save each with add_routine_task (source: photo). First call get_life_pnl to see what is already tracked. For each task the user describes: if it is the same activity as an existing task (even worded differently, e.g. 'washing dishes' vs 'washing dishes after dinner'), update that task by passing its task_id to add_routine_task instead of creating a duplicate; ask when unsure. Estimate duration from general benchmarks (hand-washing dishes 40-60 min/day, supermarket run 60-90 min/week), ASK the user to confirm or adjust, then call add_routine_task with confirmed numbers. Never invent money figures — the tools return them. Use get_life_pnl to show the picture. Speak the user's language; keep money in BRL." + style,
-		Tools:       []tool.Tool{addTask, pnl},
+		Instruction: "You capture the user's routine and who they are. The price of their hour is what every number in the product is computed from: if get_profile shows it was never set, ask for it before pricing anything — either what an hour of their time is worth, or what they earn in a month and how many hours a week they work, and call set_profile. Same for where they start their day, when the conversation is about commuting. Photos: when the user sends an image (handwritten to-do list, paper calendar, pile of boletos, school note, whiteboard), read every item on it, turn each into a routine task with your best estimate of minutes and times per month, list them in one short message for confirmation, and after the user confirms save each with add_routine_task (source: photo). First call get_life_pnl to see what is already tracked. For each task the user describes: if it is the same activity as an existing task (even worded differently, e.g. 'washing dishes' vs 'washing dishes after dinner'), update that task by passing its task_id to add_routine_task instead of creating a duplicate; ask when unsure. Estimate duration from general benchmarks (hand-washing dishes 40-60 min/day, supermarket run 60-90 min/week), ASK the user to confirm or adjust, then call add_routine_task with confirmed numbers. Never invent money figures — the tools return them. Use get_life_pnl to show the picture. Speak the user's language; keep money in BRL." + style,
+		Tools:       []tool.Tool{addTask, pnl, getProf, setProf},
 	})
 	if err != nil {
 		return nil, err
@@ -341,7 +400,12 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 	// decides which facts are durable.
 	var memTools []tool.Tool
 	var afterRun []agent.AfterAgentCallback
-	instruction := "You are Automate.me. Goal: find where the user leaks time, price it in BRL, and automate the worst leaks. Delegate routine capture (text or photos of lists, calendars, boletos, notes) to routine_analyst, recommendations to automation_advisor, and anything about today's/tomorrow's schedule, commute, departure times, traffic, weather or floods to day_planner. Be concise and concrete; lead with numbers the tools return. Everything monetary comes from tools, never from you."
+	// The orchestrator carries the profile tools itself. A person states their
+	// rate or their address in the middle of any conversation, and routing that
+	// to a sub-agent first is how the fact gets lost: it once answered "I have
+	// updated your hourly rate" without ever calling the tool.
+	rootTools := []tool.Tool{getProf, setProf}
+	instruction := "You are Automate.me. Goal: find where the user leaks time, price it in BRL, and automate the worst leaks. Delegate routine capture (text or photos of lists, calendars, boletos, notes) to routine_analyst, recommendations to automation_advisor, and anything about today's/tomorrow's schedule, commute, departure times, traffic, weather or floods to day_planner. Be concise and concrete; lead with numbers the tools return. Everything monetary comes from tools, never from you. When the user tells you what their hour is worth, what they earn, how many hours they work, where they live or where they work — call set_profile yourself, in that same turn, and quote back what the tool returned. Never say you saved, updated or remembered something unless a tool call did it."
 	if d.Memory != nil {
 		memTools = []tool.Tool{preloadmemorytool.New(), loadmemorytool.New()}
 		afterRun = []agent.AfterAgentCallback{d.rememberTurn}
@@ -354,7 +418,7 @@ func New(llm model.LLM, d Deps) (agent.Agent, error) {
 		Model:               llm,
 		Instruction:         instruction + style,
 		SubAgents:           []agent.Agent{analyst, advisor, planner},
-		Tools:               memTools,
+		Tools:               append(rootTools, memTools...),
 		AfterAgentCallbacks: afterRun,
 	})
 }

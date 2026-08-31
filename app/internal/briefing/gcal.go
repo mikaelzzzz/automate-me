@@ -1,6 +1,7 @@
 package briefing
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"sort"
@@ -64,7 +65,7 @@ func (g *GoogleCalendar) Calendars() []string { return g.readIDs }
 
 // EventsFor reads one local day across every connected calendar and splits it
 // into trips, screen time, and noise. Only the trips cost a route call.
-func (g *GoogleCalendar) EventsFor(ctx context.Context, day time.Time) (DaySchedule, error) {
+func (g *GoogleCalendar) EventsFor(ctx context.Context, day time.Time, home string) (DaySchedule, error) {
 	local := day.In(g.loc)
 	from := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, g.loc)
 	to := from.AddDate(0, 0, 1)
@@ -80,13 +81,13 @@ func (g *GoogleCalendar) EventsFor(ctx context.Context, day time.Time) (DaySched
 		}
 		raw = append(raw, items.Items...)
 	}
-	return g.classify(raw), nil
+	return g.classify(raw, cmp.Or(strings.TrimSpace(home), g.Home)), nil
 }
 
 // classify turns raw calendar events into a DaySchedule: every row of the day
 // kept as an Entry, and the subset worth a route call as Events. Pure given
 // its input — the API call is the only thing above it.
-func (g *GoogleCalendar) classify(raw []*calendar.Event) DaySchedule {
+func (g *GoogleCalendar) classify(raw []*calendar.Event, home string) DaySchedule {
 	type dated struct {
 		ev    *calendar.Event
 		start time.Time
@@ -151,7 +152,7 @@ func (g *GoogleCalendar) classify(raw []*calendar.Event) DaySchedule {
 			day.Entries = append(day.Entries, entry)
 			continue
 		}
-		origin := g.Home
+		origin := home
 		// Chained trip: coming straight from the previous appointment, if it
 		// ends within four hours of this one starting.
 		if lastPlace != "" && !lastEnd.IsZero() && it.start.Sub(lastEnd) <= 4*time.Hour {

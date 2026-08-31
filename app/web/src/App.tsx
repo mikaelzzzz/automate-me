@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { api, type Briefing, type LedgerEntry, type MandateRecord, type Pnl, type Proposal } from './lib/api'
+import { api, brl, type Briefing, type LedgerEntry, type MandateRecord, type Pnl, type Profile, type Proposal } from './lib/api'
 import { deriveActivity } from './lib/activity'
 import { AgentRail, type AgentHandle, type Screen } from './components/AgentRail'
 import { Dashboard } from './pages/Dashboard'
@@ -8,6 +8,7 @@ import { ProposalsView } from './pages/Proposals'
 import { BriefingView } from './components/BriefingView'
 import { LedgerView } from './components/LedgerView'
 import { ConsentModal } from './components/ConsentModal'
+import { Onboarding } from './pages/Onboarding'
 
 const RAIL: { id: Screen; label: string; icon: ReactNode }[] = [
   {
@@ -68,6 +69,11 @@ export default function App() {
   const [consentFor, setConsentFor] = useState<Proposal | null>(null)
   const [version, setVersion] = useState(0)
   const [railOpen, setRailOpen] = useState(false)
+  // The profile is asked for once, before anything can be priced — and edited
+  // from the P&L afterwards. `editing` opens the same flow on demand.
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [skipped, setSkipped] = useState(false)
+  const [editing, setEditing] = useState(false)
   const agent = useRef<AgentHandle>(null)
 
   const refresh = useCallback(() => {
@@ -82,6 +88,7 @@ export default function App() {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
     api.briefing().then(setBriefing).catch(() => setBriefing(null))
     api.mandates().then(setMandates).catch(() => setMandates([]))
+    api.profile().then(setProfile).catch(() => setProfile(null))
   }, [])
 
   useEffect(refresh, [refresh])
@@ -103,6 +110,24 @@ export default function App() {
   const openConsent = (id: string) => {
     const p = proposals.find((x) => x.id === id)
     if (p) setConsentFor(p)
+  }
+
+  // Nothing in the product means anything before the hour has a price, so the
+  // setup flow owns the screen until it does (or the user waves it off).
+  if (editing || (profile && !profile.user.onboarded && !skipped)) {
+    return (
+      <Onboarding
+        current={profile}
+        onSkip={() => setSkipped(true)}
+        onDone={(p) => {
+          setProfile(p)
+          setEditing(false)
+          setSkipped(false)
+          refresh()
+          setScreen('pnl')
+        }}
+      />
+    )
   }
 
   return (
@@ -166,6 +191,8 @@ export default function App() {
         {error && (
           <div className="bg-alert-tint text-alert-deep rounded-xl px-4 py-3 text-sm mb-5">Backend unreachable: {error}</div>
         )}
+
+        {screen === 'pnl' && profile && <RateBar profile={profile} onEdit={() => setEditing(true)} />}
 
         {screen === 'pnl' &&
           (pnl ? (
@@ -253,6 +280,33 @@ function Soon({ title, line }: { title: string; line: string }) {
       <p className="scap m-0">shipping next</p>
       <h1 className="display m-0 mt-1 text-[30px] font-semibold leading-tight">{title}</h1>
       <p className="text-ink-secondary text-sm mt-3 leading-relaxed">{line}</p>
+    </div>
+  )
+}
+
+// RateBar keeps the assumption behind every number on the P&L visible, and one
+// click from being changed. A rate nobody can find is a rate nobody trusts.
+function RateBar({ profile, onEdit }: { profile: Profile; onEdit: () => void }) {
+  const u = profile.user
+  const where = u.work_setup === 'remote' ? 'works remotely' : u.home_address ? `starts the day at ${u.home_address}` : ''
+  return (
+    <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-1.5 bg-surface hairline rounded-card px-4 py-2.5">
+      <span className="scap">priced at</span>
+      <span className="tabular font-medium">{brl(u.hourly_rate_cents)}/h</span>
+      {u.rate_basis === 'income' && u.monthly_income_cents ? (
+        <span className="text-xs text-ink-tertiary">
+          from {brl(u.monthly_income_cents)}/month over {u.hours_per_week}h a week
+        </span>
+      ) : (
+        <span className="text-xs text-ink-tertiary">you set this by hand</span>
+      )}
+      {where && <span className="text-xs text-ink-tertiary hidden sm:inline">· {where}</span>}
+      <button
+        onClick={onEdit}
+        className="ml-auto rounded-pill border-subtle bg-paper text-xs px-3 py-1.5 cursor-pointer hover:bg-gold-tint transition-colors"
+      >
+        Change
+      </button>
     </div>
   )
 }

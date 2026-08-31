@@ -27,6 +27,23 @@ func CostOfInactionCents(t Task, hourlyRateCents int64) int64 {
 	return roundCents(hoursPerMonth * float64(hourlyRateCents))
 }
 
+// WeeksPerMonth is 52/12 — the only honest conversion between a week and a
+// month, and the one every rate in the product is derived with.
+const WeeksPerMonth = 52.0 / 12.0
+
+// HourlyRateFromIncome prices an hour from what the user earns: monthly income
+// divided by the hours actually worked in a month. It is the second way into
+// the Value Engine — most people know what they make in a month and have never
+// worked out what an hour of it is worth.
+//
+// Returns 0 on nonsense input, so a bad form never produces a bad price.
+func HourlyRateFromIncome(monthlyIncomeCents int64, hoursPerWeek float64) int64 {
+	if monthlyIncomeCents <= 0 || hoursPerWeek <= 0 || hoursPerWeek > 168 {
+		return 0
+	}
+	return roundCents(float64(monthlyIncomeCents) / (hoursPerWeek * WeeksPerMonth))
+}
+
 // MinutesPerMonth returns the total minutes/month the task consumes.
 func MinutesPerMonth(t Task) float64 {
 	if t.EstMinutes <= 0 || t.FreqPerMonth <= 0 {

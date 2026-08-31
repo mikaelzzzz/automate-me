@@ -101,6 +101,43 @@ export interface BriefingCard {
 
 // One row of the day exactly as the calendar has it. The briefing prices the
 // trips; the agenda shows everything, and says why the rest was not priced.
+// The profile is the money spine: every figure in the product is this rate
+// multiplied by time.
+export interface ProfileUser {
+  id: string
+  name: string
+  mode: string
+  hourly_rate_cents: number
+  rate_basis?: 'declared' | 'income'
+  monthly_income_cents?: number
+  hours_per_week?: number
+  home_address?: string
+  work_address?: string
+  work_setup?: 'remote' | 'hybrid' | 'onsite'
+  onboarded: boolean
+}
+
+export interface Profile {
+  user: ProfileUser
+  tasks: number
+  hours_per_month: number
+  cost_of_inaction_cents: number
+  proposals: number
+  best_monthly_savings_cents: number
+  previous_hourly_rate_cents?: number
+  cost_delta_cents?: number
+}
+
+export interface ProfileInput {
+  name?: string
+  hourly_rate_cents?: number
+  monthly_income_cents?: number
+  hours_per_week?: number
+  home_address?: string
+  work_address?: string
+  work_setup?: string
+}
+
 export interface AgendaEntry {
   id: string
   summary: string
@@ -167,6 +204,13 @@ export const api = {
     }).then((r) => j<ConsentResult>(r)),
   ledger: () => fetch('/app/api/ledger').then((r) => j<LedgerEntry[]>(r)),
   mandates: () => fetch('/app/api/mandates').then((r) => j<MandateRecord[]>(r)),
+  profile: () => fetch('/app/api/profile').then((r) => j<Profile>(r)),
+  saveProfile: (input: ProfileInput) =>
+    fetch('/app/api/profile', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then((r) => j<Profile>(r)),
   agenda: () => fetch('/app/api/agenda').then((r) => j<Agenda>(r)),
   briefing: () => fetch('/app/api/briefing').then((r) => j<Briefing>(r)),
   runBriefing: () => fetch('/app/api/briefing/run', { method: 'POST' }).then((r) => j<Briefing>(r)),

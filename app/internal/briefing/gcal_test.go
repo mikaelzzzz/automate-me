@@ -30,6 +30,12 @@ func ev(t *testing.T, summary, location, start, end string) *calendar.Event {
 	}
 }
 
+// classifyDefault classifies with the calendar's own home address, which is
+// what the server does when the user's profile carries no address.
+func (g *GoogleCalendar) classifyDefault(raw []*calendar.Event) DaySchedule {
+	return g.classify(raw, g.Home)
+}
+
 func testCalendar(t *testing.T, home string) *GoogleCalendar {
 	t.Helper()
 	loc, err := time.LoadLocation("America/Sao_Paulo")
@@ -43,7 +49,7 @@ func testCalendar(t *testing.T, home string) *GoogleCalendar {
 // what it saw instead of showing an empty page.
 func TestClassifyRemoteDay(t *testing.T) {
 	g := testCalendar(t, "Rua dos Pinheiros 1000, São Paulo")
-	got := g.classify([]*calendar.Event{
+	got := g.classifyDefault([]*calendar.Event{
 		ev(t, "Madrugas - 8 AM", "https://us06web.zoom.us/j/84961898183?pwd=x", "2026-09-01 08:00", "2026-09-01 09:00"),
 		ev(t, "Coldplay", "https://meet.google.com/qzm-cmtt-eax", "2026-09-01 15:00", "2026-09-01 16:00"),
 		ev(t, "Terapia", "", "2026-09-01 10:00", "2026-09-01 11:00"),
@@ -62,7 +68,7 @@ func TestClassifyRemoteDay(t *testing.T) {
 func TestClassifyOriginChaining(t *testing.T) {
 	home := "Rua dos Pinheiros 1000, São Paulo"
 	g := testCalendar(t, home)
-	got := g.classify([]*calendar.Event{
+	got := g.classifyDefault([]*calendar.Event{
 		ev(t, "Terapia", "Av. Paulista 1578, São Paulo", "2026-09-01 10:00", "2026-09-01 11:00"),
 		// Same morning, straight from the last address.
 		ev(t, "Pediatra", "Vila Prudente, São Paulo", "2026-09-01 12:00", "2026-09-01 13:00"),
@@ -94,7 +100,7 @@ func TestClassifySkipsOwnBlocksAndNoise(t *testing.T) {
 	allDay := &calendar.Event{Id: "holiday", Summary: "Feriado", Status: "confirmed",
 		Start: &calendar.EventDateTime{Date: "2026-09-01"}, End: &calendar.EventDateTime{Date: "2026-09-02"}}
 
-	got := g.classify([]*calendar.Event{block, ooo, declined, allDay,
+	got := g.classifyDefault([]*calendar.Event{block, ooo, declined, allDay,
 		ev(t, "Terapia", "Av. Paulista 1578", "2026-09-01 10:00", "2026-09-01 11:00")})
 
 	if len(got.Events) != 1 || got.Events[0].Summary != "Terapia" {
@@ -108,7 +114,7 @@ func TestClassifySkipsOwnBlocksAndNoise(t *testing.T) {
 // Two appointments at the same address in a row are one trip.
 func TestClassifyCollapsesSamePlace(t *testing.T) {
 	g := testCalendar(t, "home")
-	got := g.classify([]*calendar.Event{
+	got := g.classifyDefault([]*calendar.Event{
 		ev(t, "Aula 1", "Av. Paulista 1578", "2026-09-01 10:00", "2026-09-01 11:00"),
 		ev(t, "Aula 2", "av. paulista 1578", "2026-09-01 11:00", "2026-09-01 12:00"),
 	})
@@ -121,7 +127,7 @@ func TestClassifyCollapsesSamePlace(t *testing.T) {
 // has to say why.
 func TestClassifyWithoutHomeAddress(t *testing.T) {
 	g := testCalendar(t, "")
-	got := g.classify([]*calendar.Event{
+	got := g.classifyDefault([]*calendar.Event{
 		ev(t, "Terapia", "Av. Paulista 1578", "2026-09-01 10:00", "2026-09-01 11:00"),
 	})
 	if len(got.Events) != 0 {

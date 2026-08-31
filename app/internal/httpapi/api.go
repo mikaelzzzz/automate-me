@@ -12,6 +12,7 @@ import (
 	"automate-me/app/internal/briefing"
 	"automate-me/app/internal/catalog"
 	"automate-me/app/internal/engine"
+	"automate-me/app/internal/profile"
 	"automate-me/app/internal/store"
 	"automate-me/app/internal/trusted"
 )
@@ -32,6 +33,8 @@ type Handler struct {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /app/api/profile", h.getProfile)
+	mux.HandleFunc("PUT /app/api/profile", h.putProfile)
 	mux.HandleFunc("GET /app/api/pnl", h.pnl)
 	mux.HandleFunc("GET /app/api/proposals", h.proposals)
 	mux.HandleFunc("POST /app/api/proposals/{id}/approve", h.approve)
@@ -59,6 +62,36 @@ type briefingResponse struct {
 	Note string `json:"note,omitempty"`
 }
 
+// getProfile answers what the app knows about the person: the price of their
+// hour, where their day starts, and what the record is worth at that rate.
+func (h *Handler) getProfile(w http.ResponseWriter, r *http.Request) {
+	sum, err := profile.Get(r.Context(), h.Store, h.UserID(r))
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sum)
+}
+
+// putProfile is what onboarding submits. It re-prices the whole record at the
+// new rate and answers with the fresh numbers, so the screen shows the
+// consequence of the change instead of a bare 200.
+func (h *Handler) putProfile(w http.ResponseWriter, r *http.Request) {
+	var in profile.Input
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	sum, err := profile.Apply(r.Context(), h.Store, h.UserID(r), in)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	slog.Info("profile updated", "user", h.UserID(r), "rate_cents", sum.User.HourlyRateCents,
+		"basis", sum.User.RateBasis, "work_setup", sum.User.WorkSetup, "cost_delta_cents", sum.CostDeltaCents)
+	writeJSON(w, http.StatusOK, sum)
+}
+
 // agendaResponse is the day as the calendar has it — every row, not only the
 // ones worth a route. The SPA shows this above the briefing cards so the user
 // reads their own day, and sees exactly why a row was or was not priced.
@@ -82,7 +115,13 @@ func (h *Handler) agenda(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	day := h.Briefing.DayFor(h.Briefing.Now())
-	sched, err := h.Briefing.Schedule(r.Context(), h.Events, day)
+	// The day is routed from where the user says their day starts.
+	u, err := h.Store.GetUser(r.Context(), h.UserID(r))
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	sched, err := h.Briefing.Schedule(r.Context(), h.Events, day, u.HomeAddress)
 	if err != nil {
 		httpErr(w, err)
 		return
@@ -134,7 +173,7 @@ func (h *Handler) runBriefing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	day := h.Briefing.DayFor(h.Briefing.Now())
-	sched, err := h.Briefing.Schedule(r.Context(), h.Events, day)
+	sched, err := h.Briefing.Schedule(r.Context(), h.Events, day, u.HomeAddress)
 	if err != nil {
 		httpErr(w, err)
 		return

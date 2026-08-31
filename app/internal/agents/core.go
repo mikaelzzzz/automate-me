@@ -9,6 +9,7 @@ import (
 
 	"automate-me/app/internal/catalog"
 	"automate-me/app/internal/engine"
+	"automate-me/app/internal/profile"
 	"automate-me/app/internal/proposer"
 	"automate-me/app/internal/store"
 )
@@ -55,6 +56,75 @@ func (d Deps) AddTask(ctx context.Context, userID string, in addTaskIn) (addTask
 		note = "Updated the existing task instead of duplicating it. Value computed deterministically; never estimate money yourself."
 	}
 	return addTaskOut{TaskID: t.ID, Updated: updated, CostOfInactionMonth: brl(cost), Note: note}, nil
+}
+
+// GetProfile answers what the app knows about the person and what their
+// record is worth at the current rate.
+func (d Deps) GetProfile(ctx context.Context, userID string) (profileOut, error) {
+	sum, err := profile.Get(ctx, d.Store, userID)
+	if err != nil {
+		return profileOut{}, err
+	}
+	return profileView(sum, "This is what every number in the product is priced from."), nil
+}
+
+// SetProfile records what the user just told us — the price of their hour,
+// where they live and work — and re-prices everything already tracked.
+func (d Deps) SetProfile(ctx context.Context, userID string, in profile.Input) (profileOut, error) {
+	sum, err := profile.Apply(ctx, d.Store, userID, in)
+	if err != nil {
+		return profileOut{}, err
+	}
+	note := "Saved. Everything already tracked was re-priced at this rate by the Value Engine."
+	if sum.CostDeltaCents != 0 {
+		note += fmt.Sprintf(" The same routine is now worth %s/month %s than before.",
+			brl(abs64(sum.CostDeltaCents)), moreOrLess(sum.CostDeltaCents))
+	}
+	return profileView(sum, note), nil
+}
+
+type profileOut struct {
+	Name           string  `json:"name,omitempty"`
+	HourlyRate     string  `json:"hourly_rate"`
+	RateBasis      string  `json:"rate_basis,omitempty"`
+	MonthlyIncome  string  `json:"monthly_income,omitempty"`
+	HoursPerWeek   float64 `json:"hours_per_week,omitempty"`
+	HomeAddress    string  `json:"home_address,omitempty"`
+	WorkAddress    string  `json:"work_address,omitempty"`
+	WorkSetup      string  `json:"work_setup,omitempty"`
+	Onboarded      bool    `json:"onboarded"`
+	Tasks          int     `json:"tasks_tracked"`
+	HoursPerMonth  float64 `json:"hours_per_month"`
+	CostOfInaction string  `json:"cost_of_inaction_per_month"`
+	Note           string  `json:"note"`
+}
+
+func profileView(sum profile.Summary, note string) profileOut {
+	u := sum.User
+	out := profileOut{
+		Name: u.Name, HourlyRate: brl(u.HourlyRateCents) + "/h", RateBasis: u.RateBasis,
+		HoursPerWeek: u.HoursPerWeek, HomeAddress: u.HomeAddress, WorkAddress: u.WorkAddress,
+		WorkSetup: u.WorkSetup, Onboarded: u.Onboarded, Tasks: sum.Tasks,
+		HoursPerMonth: sum.HoursPerMonth, CostOfInaction: brl(sum.CostOfInaction), Note: note,
+	}
+	if u.MonthlyIncomeCents > 0 {
+		out.MonthlyIncome = brl(u.MonthlyIncomeCents) + "/month"
+	}
+	return out
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func moreOrLess(v int64) string {
+	if v < 0 {
+		return "less"
+	}
+	return "more"
 }
 
 // LifePNL is every routine with its monthly hours and Cost of Inaction.
@@ -198,7 +268,7 @@ func (d Deps) PlanMyDay(ctx context.Context, userID string) (briefingOut, error)
 		return briefingOut{}, err
 	}
 	day := d.Briefing.DayFor(d.Briefing.Now())
-	sched, err := d.Briefing.Schedule(ctx, d.Events, day)
+	sched, err := d.Briefing.Schedule(ctx, d.Events, day, u.HomeAddress)
 	if err != nil {
 		return briefingOut{Note: "The calendar could not be read: " + err.Error()}, nil
 	}
@@ -405,6 +475,36 @@ func (d Deps) LiveTools() map[string]LiveTool {
 			},
 			Invoke: func(ctx context.Context, uid string, _ json.RawMessage) (any, error) { return d.GetBriefing(ctx, uid) },
 		},
+		"get_profile": {
+			Declaration: map[string]any{
+				"name":        "get_profile",
+				"description": "What the app knows about the user: the price of their hour, how that price was set, where they live and work, and what their tracked routine costs per month at that rate.",
+				"parameters":  obj(map[string]any{}),
+			},
+			Invoke: func(ctx context.Context, uid string, _ json.RawMessage) (any, error) { return d.GetProfile(ctx, uid) },
+		},
+		"set_profile": {
+			Declaration: map[string]any{
+				"name":        "set_profile",
+				"description": "Record what the user just told you about themselves and re-price everything at the new rate. Price the hour either directly (hourly_rate_reais) or from what they earn (monthly_income_reais with hours_per_week) — never both. Only send the fields they actually gave you.",
+				"parameters": obj(map[string]any{
+					"name":                 map[string]any{"type": "string", "description": "what to call them"},
+					"hourly_rate_reais":    map[string]any{"type": "number", "description": "what one hour of their time is worth, in reais"},
+					"monthly_income_reais": map[string]any{"type": "number", "description": "what they earn in a month, in reais"},
+					"hours_per_week":       map[string]any{"type": "number", "description": "hours they work in a week — required with monthly_income_reais"},
+					"home_address":         map[string]any{"type": "string", "description": "where the day starts; the briefing routes from here"},
+					"work_address":         map[string]any{"type": "string", "description": "where they work, when they go somewhere"},
+					"work_setup":           map[string]any{"type": "string", "enum": []string{"remote", "hybrid", "onsite"}},
+				}),
+			},
+			Invoke: func(ctx context.Context, uid string, a json.RawMessage) (any, error) {
+				in, err := decode[setProfileIn](a)
+				if err != nil {
+					return nil, err
+				}
+				return d.SetProfile(ctx, uid, in.toInput())
+			},
+		},
 		"write_departure_blocks": {
 			Declaration: map[string]any{
 				"name":        "write_departure_blocks",
@@ -440,8 +540,8 @@ type consultIn struct {
 // LiveToolOrder fixes the order the declarations are sent in, so the model
 // sees the read-only tools before the ones that change something.
 var LiveToolOrder = []string{
-	"consult_specialist", "get_life_pnl", "get_daily_briefing", "add_routine_task",
-	"propose_automations", "plan_my_day", "approve_proposal", "write_departure_blocks",
+	"consult_specialist", "get_profile", "get_life_pnl", "get_daily_briefing", "add_routine_task",
+	"set_profile", "propose_automations", "plan_my_day", "approve_proposal", "write_departure_blocks",
 }
 
 // LiveSystemInstruction is what the voice model is told. It mirrors the graph's

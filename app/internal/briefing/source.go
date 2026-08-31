@@ -42,9 +42,11 @@ type DaySchedule struct {
 	Note    string  `json:"note"`
 }
 
-// EventSource supplies the appointments of one day.
+// EventSource supplies the appointments of one day. home is where the user's
+// day starts (their profile address); an empty string falls back to whatever
+// the source was configured with.
 type EventSource interface {
-	EventsFor(ctx context.Context, day time.Time) (DaySchedule, error)
+	EventsFor(ctx context.Context, day time.Time, home string) (DaySchedule, error)
 	// SourceLabel names where the day came from ("seed", "google:…"), so the
 	// UI never leaves the user guessing whose calendar they are reading.
 	SourceLabel() string
@@ -56,7 +58,7 @@ type DemoSource struct{ Loc *time.Location }
 
 func (DemoSource) SourceLabel() string { return "seed" }
 
-func (s DemoSource) EventsFor(_ context.Context, day time.Time) (DaySchedule, error) {
+func (s DemoSource) EventsFor(_ context.Context, day time.Time, _ string) (DaySchedule, error) {
 	evs := DemoAppointments(day, s.Loc)
 	entries := make([]Entry, 0, len(evs))
 	for _, e := range evs {
@@ -152,11 +154,11 @@ func plural2(n int) string {
 // Schedule reads the day from the connected source. A nil source is the
 // seeded day; a failing calendar is an error, never silently seeded data —
 // the briefing would otherwise brief someone else's life.
-func (b *Builder) Schedule(ctx context.Context, src EventSource, day time.Time) (DaySchedule, error) {
+func (b *Builder) Schedule(ctx context.Context, src EventSource, day time.Time, home string) (DaySchedule, error) {
 	if src == nil {
 		src = DemoSource{Loc: b.Loc}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	return src.EventsFor(ctx, day)
+	return src.EventsFor(ctx, day, home)
 }

@@ -27,6 +27,25 @@ type User struct {
 	Name            string `json:"name" firestore:"name"`
 	Mode            string `json:"mode" firestore:"mode"` // personal | teams
 	HourlyRateCents int64  `json:"hourly_rate_cents" firestore:"hourly_rate_cents"`
+
+	// What onboarding asks once and everything else is priced from.
+	//
+	// RateBasis records how the hour got its price: "declared" when the user
+	// typed it, "income" when it was derived from what they earn. Keeping the
+	// income and the hours behind a derived rate means the number can be
+	// re-derived — and explained — instead of being a figure nobody can trace.
+	RateBasis          string  `json:"rate_basis,omitempty" firestore:"rate_basis,omitempty"`
+	MonthlyIncomeCents int64   `json:"monthly_income_cents,omitempty" firestore:"monthly_income_cents,omitempty"`
+	HoursPerWeek       float64 `json:"hours_per_week,omitempty" firestore:"hours_per_week,omitempty"`
+	// Where the day starts and where the work is: the briefing routes from
+	// home, and the agent stops asking where "the office" is.
+	HomeAddress string `json:"home_address,omitempty" firestore:"home_address,omitempty"`
+	WorkAddress string `json:"work_address,omitempty" firestore:"work_address,omitempty"`
+	// WorkSetup is "remote" | "hybrid" | "onsite" — it decides whether a
+	// commute is even a routine worth pricing.
+	WorkSetup string `json:"work_setup,omitempty" firestore:"work_setup,omitempty"`
+	// Onboarded is false until the user has priced their hour once.
+	Onboarded bool `json:"onboarded" firestore:"onboarded"`
 }
 
 // ProposalStatus lifecycle (design §4 proposals).

@@ -121,3 +121,27 @@ func TestTrafficCostCents(t *testing.T) {
 		t.Errorf("free-flow should cost 0, got %d", got)
 	}
 }
+
+func TestHourlyRateFromIncome(t *testing.T) {
+	cases := []struct {
+		name         string
+		monthlyCents int64
+		hoursPerWeek float64
+		want         int64
+	}{
+		// R$8.000/month over a 40h week: 40 × 52/12 = 173.33 h → R$46.15/h.
+		{"full time", 8_000_00, 40, 46_15},
+		// Half the hours, twice the hour.
+		{"part time", 8_000_00, 20, 92_31},
+		{"no income", 0, 40, 0},
+		{"no hours", 8_000_00, 0, 0},
+		{"more hours than a week has", 8_000_00, 200, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := HourlyRateFromIncome(c.monthlyCents, c.hoursPerWeek); got != c.want {
+				t.Errorf("HourlyRateFromIncome(%d, %v) = %d, want %d", c.monthlyCents, c.hoursPerWeek, got, c.want)
+			}
+		})
+	}
+}
