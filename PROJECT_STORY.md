@@ -71,12 +71,23 @@ in reais, what to wear, and **whether your route crosses somewhere that floods.*
 A multi-agent system on **ADK Go v2.2.0** with **Gemini 3.5 Flash**, deployed on **Google Cloud
 Run**.
 
-A root `automate_me` orchestrator routes to specialist sub-agents — `routine_analyst`,
-`automation_advisor`, `day_planner` — over function tools that wrap deterministic Go modules. The
+A root `automate_me` orchestrator routes to four specialist sub-agents — `routine_analyst`,
+`automation_advisor`, `day_planner` and `product_scout` — over function tools that wrap
+deterministic Go modules. The
 LLM converses and routes; the engine computes. The **Talk** tab is a live
 [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) session: `gemini-3.1-flash-live` is
 the front of house, and every judgement it makes is handed to the 3.5 graph through
 `consult_specialist`, because the only conversational Live model should not also be the brain.
+
+The **Product Scout** is the one sub-agent with Gemini's built-in Google Search, and Search is its
+only tool — the API refuses to mix the built-in with function declarations, and ADK gives every
+sub-agent a `transfer_to_agent` function, so the scout sets
+`tool_config.include_server_side_tool_invocations` to both resolve that and make the server-side
+search visible in the response instead of invisible. Ask it for a wireless mechanical keyboard
+under R$500 and it comes back with real listings at current prices with working links — then
+argues its pick in terms of *your time*, not the sticker: it chose the cheaper ABNT2 layout
+because the other one would cost you an evening reconfiguring your system. That is the product's
+whole thesis coming back out of a live search result.
 
 **Payments run on AP2 v0.2 over A2A v1.0.1.** A separate merchant agent — its own private Cloud
 Run service, invokable only by the app's service account — signs Checkout JWTs. The app signs

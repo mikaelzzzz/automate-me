@@ -97,8 +97,10 @@ the value in currency.
 ### How we built it
 
 A multi-agent system on **ADK Go v2.2.0** with **Gemini 3.5 Flash**. A root `automate_me`
-orchestrator routes to three sub-agents — `routine_analyst`, `automation_advisor`,
-`day_planner` — over seven function tools (`add_routine_task`, `get_life_pnl`,
+orchestrator routes to four sub-agents — `routine_analyst`, `automation_advisor`,
+`day_planner` and `product_scout` (the only one with Gemini's built-in Google Search, which
+returns real listings at current prices and argues its pick in terms of your time, not the
+sticker) — over seven function tools (`add_routine_task`, `get_life_pnl`,
 `propose_automations`, `approve_proposal`, `plan_my_day`, `get_daily_briefing`,
 `write_departure_blocks`).
 
