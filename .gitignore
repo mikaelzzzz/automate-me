@@ -25,3 +25,9 @@ tmp/
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# Submission working notes — local only
+PROJECT_STORY.md
+SUBMISSION_ANSWERS.md
+SUBMISSION_CHECKLIST.md
+VIDEO_SCRIPT.md
