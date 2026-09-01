@@ -1,5 +1,77 @@
 # CONTEXT.md — deltas por sessão
 
+## 4. ATUALIZACAO 2026-08-31 (tarde/noite) — agenda real, Firestore, Memory Bank, onboarding, Product Scout, login
+
+Sessao de design/produto, rodando junto com a sessao de submissao (`automate-me-52`).
+Coordenacao por SendMessage; rebase em cima do trabalho dela, nunca force-push.
+
+**O que foi feito:**
+- **Agenda real lida, nao so escrita** (`internal/briefing/gcal.go`): `GoogleCalendar` virou
+  `EventSource` + `BlockWriter`. `CALENDAR_ID` aceita lista separada por virgula (1a = onde
+  escreve). `classify()` separa o dia em `trip` / `remote` / `no_place` / `ignored` — ignora
+  all-day, out-of-office, recusados e **os blocos que o proprio app escreveu** (senao briefa
+  viagem pra viagem). Origem encadeia do compromisso anterior (<4h), senao endereco do perfil /
+  `HOME_ADDRESS`. Link colado sem `https://` conta como remoto.
+- **Agenda no front-end**: `GET /app/api/agenda` devolve o dia inteiro com o motivo de cada linha;
+  painel "Your day" acima dos cards, com badge da fonte (live Google Calendar vs seeded day).
+  Read-only, nao gasta chamada da Routes API.
+- **Sessoes ADK no Firestore** (`internal/fsession`): `session.Service` completo (partial nunca
+  persiste, `app:`/`user:`/`temp:` por prefixo, `temp:` descartado, merge com prefixos de volta).
+  Estado como JSON text; id do evento = contador zero-padded (le em ordem sem indice composto).
+  Suite `sessiontestsuite` do proprio ADK **verde contra o Firestore real**. `FIRESTORE_PROJECT` liga.
+- **Memory Bank** (`internal/memorybank`): Vertex AI Agent Engine Memory Bank por `user_id` via
+  `DirectContentsSource` (o client do ADK alimenta de sessao hospedada no Agent Engine; as nossas
+  estao no Firestore). Chat: `preload_memory` + `load_memory` + callback pos-turno. Voz: recall
+  injetado na system instruction no inicio da chamada, transcript enviado no fim. `MEMORY_ENGINE`
+  liga; engine `8839411031563304960`.
+- **Onboarding + perfil** (`internal/profile`): taxa digitada ou derivada da renda
+  (`renda / (horas por semana * 52/12)`), casa/trabalho/modelo de trabalho. `GET/PUT
+  /app/api/profile` + tools `get_profile`/`set_profile` no orquestrador e na voz. Trocar a taxa
+  **re-roda o proposer**. Tela de setup em 3 passos + barra de taxa no topo do P&L. Seed ja nasce
+  `onboarded` pra demo cair direto no dashboard.
+- **Product Scout**: 4o sub-agente, `gemini-3.5-flash` com `geminitool.GoogleSearch{}` como **unica**
+  tool. Tool `find_products` pra voz. Link chega por 3 caminhos (markdown, URL solta, resposta
+  inteira renderizada em markdown).
+- **Chamada de voz persiste** (`internal/calls`): transcript no Firestore, `GET/DELETE
+  /app/api/live/transcript`, restaurado ao reabrir a aba. Ao encerrar, o grafo le o transcript e
+  chama `add_routine_task` pras rotinas faladas (instruido a nao salvar nada se so houve pergunta).
+- **Login**: basic auth no app (`APP_PASSWORD` do secret `app-password`, `APP_USER=reviewer`),
+  comparacao em tempo constante, `/health` aberto. Job `briefing-daily` atualizado com o header
+  Authorization, senao o briefing das 06:00 quebrava em silencio.
+- `docs/design/architecture.png` refeito + `scripts/render-diagrams.py` (Playwright, paleta da
+  marca). `PROJECT_STORY.md` atualizado (arquivo agora fora do git, so em disco).
+
+**Deploys:** `automate-me-00022-fnr` (app) e `merchant-agent-00008-ctw`.
+
+**Gotchas:**
+- Firestore recusa **leitura depois de escrita** na mesma transacao (pegou no teste de app-state) e
+  exige indice composto pra ordem **descendente** por `__name__` — `limitToLast` e essa ordem por
+  baixo e ainda por cima nao streama. Ascendente + corte em Go nao precisa de indice nenhum.
+- Google Search nativo **nao mistura** com function declarations, e o ADK da `transfer_to_agent` a
+  todo sub-agente → o Scout precisa de `tool_config.include_server_side_tool_invocations`.
+- Callback context do ADK **recusa** `Session()` e `Memory()` — o callback pos-turno rele a sessao
+  do store pelo trio (app, user, session) e roda destacado.
+- `go.sum` precisa das entradas de `aiplatform/iampb`: o workspace resolvia pelo `go.work.sum` e o
+  Docker nao tem workspace (`GOWORK=off go mod tidy`).
+- Grounding metadata nao chegou nos eventos da sessao (`Consultation.Sources` volta vazio) — os
+  links vem do texto da resposta.
+- O orquestrador chegou a dizer "I have updated your hourly rate" **sem chamar tool nenhuma**: ele
+  recebia a mensagem mas nao tinha as tools de perfil. Carrega as duas agora.
+
+**Pendencias:**
+1. **Agenda real ainda nao ligada em producao**: falta o USUARIO compartilhar os calendarios com
+   `automate-me-run@automate-me-hack.iam.gserviceaccount.com` ("Fazer alteracoes em eventos");
+   depois `CALENDAR_ID=... HOME_ADDRESS=... ONLY=app ./infra/deploy.sh`. Achado que muda a
+   prioridade: a agenda real tem **46 compromissos em 7 dias e zero enderecos de rua** (21 links de
+   Zoom/Meet, o resto sem local) → o Briefing nao tem o que dizer; o valor esta no Calendar Watcher
+   (extrair rotinas recorrentes), nao em rota.
+2. Store da aplicacao (tasks/proposals/ledger) continua em memoria; so sessao e chamadas foram pro
+   Firestore.
+3. Duas taxas (hora de trabalho vs hora pessoal): hoje o leak usa uma taxa so, sem janela de
+   expediente — `minutos x frequencia x taxa`, sem teto de 8h nem de 24h.
+4. Custo agora inclui Firestore e Memory Bank alem dos 2 Cloud Run com `min-instances=1`.
+   Encerrado o hackathon: `MIN_INSTANCES=0 make deploy`.
+
 ## 3. ATUALIZACAO 2026-08-31 — Spending Authorization (AP2) e preparo da submissao Devpost
 
 Sessao paralela em worktree (`.claude/worktrees/hackathon-checklist`), rodando junto com a sessao
