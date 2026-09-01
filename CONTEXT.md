@@ -1,5 +1,61 @@
 # CONTEXT.md — deltas por sessão
 
+## 3. ATUALIZACAO 2026-08-31 — Spending Authorization (AP2) e preparo da submissao Devpost
+
+Sessao paralela em worktree (`.claude/worktrees/hackathon-checklist`), rodando junto com a sessao
+de design (`automate-me-d8`). Coordenacao por SendMessage; nenhuma colisao de arquivo.
+
+**O que foi feito:**
+- **Repo publicado**: https://github.com/mikaelzzzz/automate-me (publico). Antes disso nao existia
+  remote nenhum — era o bloqueador #1 da submissao. Scan de segredos rodado na working tree E no
+  historico completo antes de publicar: limpo. Publico dispensa dar acesso a `testing@devpost.com`
+  e `cloudhackathons@google.com`.
+- **Spending Authorization (AP2)** — o agente compra sozinho sob envelope assinado pelo usuario:
+  - `ap2core/authorization.go`: `SignSpendingAuthorization` / `VerifySpendingAuthorization` /
+    `Permits` (teto por compra, allowlist de merchant, expiracao dura, moeda exata sem conversao).
+    Namespace `automate.spending_authorization.1` — **nao e artefato AP2**, documentado como
+    extensao (AP2 v0.2 define exatamente 4 vct e esse nao e nenhum).
+  - `app/internal/trusted/`: caminhos consentido e autonomo compartilham uma `execute` com `gate`
+    opcional. O gate roda **depois** do Checkout JWT verificado e **antes** da primeira assinatura,
+    contra o total **assinado pelo merchant** (nunca preco calculado local). Recusa nao assina nada
+    e nao deixa registro. Consentimento explicito vence o envelope.
+  - `app/internal/httpapi/authority.go`: GET/POST/DELETE `/app/api/trusted/authority`. Conceder e
+    acao do Trusted Surface, nunca tool de agente.
+  - `approve` (HTTP e tool) tenta a compra autonoma e devolve `autonomous{purchased,needs_consent,
+    reason,total_cents,mandate_record_id}` **ao lado** dos campos que a SPA ja lia.
+  - Demo semeia envelope de R$1.000 (`DEMO_SPENDING_CAP_CENTS` sobrescreve). Fora de demo, nada
+    autorizado ate o usuario conceder.
+- **catalog**: `grocery-delivery` virou `ClassExecutable` (merchant vende, o rail compra — classificar
+  como conselho era a inconsistencia). Bug real corrigido junto: faltava o trigger `supermarket`, e
+  o matcher e `strings.Contains`, entao a tarefa semeada "Supermarket run" nao casava com receita
+  nenhuma — receita existia, produto existia, proposta nunca nascia, **nada dava erro**.
+- **`teams-report` removido** (pedido do usuario): era `ClassExecutable` com `CapReportGen` mas nada
+  o executava. `CapReportGen` saiu junto. Catalogo agora 25 receitas (8 executable, 8 advised, 9 roadmap).
+- **UI**: header do Talk diz `Live Voice · reasoning gemini-3.5-flash` em vez de expor
+  `gemini-3.1-flash-live-preview` — o nome ao lado do 3.5 fazia parecer violacao da regra "Gemini 3.5+".
+  Escondido o rotulo, **nao** o fato: README e PROJECT_STORY explicam por que o Live e 3.1.
+
+**Deploys:** varios (`ONLY=app`). Ultimo verificado por mim: rev 00011 (feature) → depois a sessao
+de design levou ate rev 00022 (basic auth). Verificado ao vivo em producao: mercado R$350 compra
+sozinho (`mnd-chk_1`), lava-loucas R$3.000 devolve `unresolved_constraint` e fica `approved`,
+consentimento manual compra. Checkout recusado nao virou MandateRecord.
+
+**Gotchas:**
+- **Store e em memoria** — aprovar algo persiste na instancia. Reset antes de gravar/demonstrar:
+  `GCP_PROJECT=automate-me-hack ONLY=app ./infra/deploy.sh`. Ensaio de voz tambem suja o P&L
+  (chamada encerrada grava rotinas de verdade).
+- Portas 8080/8081/8082/8083/8090 ocupadas nesta maquina. Local: merchant 8191, app 8192+.
+- Docs de submissao (`PROJECT_STORY.md`, `SUBMISSION_ANSWERS.md`, `SUBMISSION_CHECKLIST.md`,
+  `VIDEO_SCRIPT.md`) foram **removidos do git** a pedido do usuario e gitignorados. Continuam em
+  disco. Ainda existem no historico — limpar exige force-push, deixado pra depois do prazo.
+- Senha do reviewer nunca foi escrita em arquivo do repo (repo publico). So no form do Devpost.
+
+**Pendencias:**
+- Vídeo demo nao gravado ate o fechamento desta sessao. Roteiro pronto em `VIDEO_SCRIPT.md`.
+- Submissao Devpost nao confirmada.
+- Post social (#AllThingsAgenticHackathon) — bonus, nao feito.
+- Plan Guardian segue pos-hackathon: o Ledger so projeta, nunca confirma.
+
 ## 2. ATUALIZACAO 2026-08-31 — GCP, deploy, Briefing, redesign Command Rail e voz Live API
 
 **O que foi feito:**
